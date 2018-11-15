@@ -23,6 +23,7 @@
 #include <thrill/common/stats_timer.hpp>
 #include <thrill/common/string.hpp>
 #include <thrill/core/multiway_merge.hpp>
+#include <thrill/core/multisequence_selection.hpp>
 #include <thrill/data/dyn_block_reader.hpp>
 #include <thrill/data/file.hpp>
 
@@ -464,147 +465,14 @@ private:
      * has the same amount after merging.
      */
     void MainOp() {
-        // *** Setup Environment for merging ***
-
         // Count of all workers (and count of target partitions)
         size_t p = context_.num_workers();
         LOG << "splitting to " << p << " workers";
 
-        // Count of all local elements.
-        size_t local_size = 0;
+        std::vector<ArrayNumInputsSizeT> local_ranks;
 
-        for (size_t i = 0; i < kNumInputs; i++) {
-            local_size += files_[i]->num_items();
-        }
-
-        // test that the data we got is sorted!
-        if (self_verify) {
-            for (size_t i = 0; i < kNumInputs; i++) {
-                auto reader = files_[i]->GetKeepReader();
-                if (!reader.HasNext()) continue;
-
-                ValueType prev = reader.template Next<ValueType>();
-                while (reader.HasNext()) {
-                    ValueType next = reader.template Next<ValueType>();
-                    if (comparator_(next, prev)) {
-                        die("Merge input was not sorted!");
-                    }
-                    prev = std::move(next);
-                }
-            }
-        }
-
-        // Count of all global elements.
-        stats_.comm_timer_.Start();
-        size_t global_size = context_.net.AllReduce(local_size);
-        stats_.comm_timer_.Stop();
-
-        LOG << "local size: " << local_size;
-        LOG << "global size: " << global_size;
-
-        // Calculate and remember the ranks we search for.  In our case, we
-        // search for ranks that split the data into equal parts.
-        std::vector<size_t> target_ranks(p - 1);
-
-        for (size_t r = 0; r < p - 1; r++) {
-            target_ranks[r] = (global_size / p) * (r + 1);
-            // Modify all ranks 0..(globalSize % p), in case global_size is not
-            // divisible by p.
-            if (r < global_size % p)
-                target_ranks[r] += 1;
-        }
-
-        if (debug) {
-            LOG << "target_ranks: " << target_ranks;
-
-            stats_.comm_timer_.Start();
-            assert(context_.net.Broadcast(target_ranks) == target_ranks);
-            stats_.comm_timer_.Stop();
-        }
-
-        // buffer for the global ranks of selected pivots
-        std::vector<size_t> global_ranks(p - 1);
-
-        // Search range bounds.
-        std::vector<ArrayNumInputsSizeT> left(p - 1), width(p - 1);
-
-        // Auxillary arrays.
-        std::vector<Pivot> pivots(p - 1);
-        std::vector<ArrayNumInputsSizeT> local_ranks(p - 1);
-
-        // Initialize all lefts with 0 and all widths with size of their
-        // respective file.
-        for (size_t r = 0; r < p - 1; r++) {
-            for (size_t q = 0; q < kNumInputs; q++) {
-                width[r][q] = files_[q]->num_items();
-            }
-        }
-
-        bool finished = false;
-        stats_.balancing_timer_.Start();
-
-        // Iterate until we find a pivot which is within the prescribed balance
-        // tolerance
-        while (!finished) {
-
-            LOG << "iteration: " << stats_.iterations_;
-            LOG0 << "left: " << left;
-            LOG0 << "width: " << width;
-
-            if (debug) {
-                for (size_t q = 0; q < kNumInputs; q++) {
-                    std::ostringstream oss;
-                    for (size_t i = 0; i < p - 1; ++i) {
-                        if (i != 0) oss << " # ";
-                        oss << '[' << left[i][q] << ',' << left[i][q] + width[i][q] << ')';
-                    }
-                    LOG1 << "left/right[" << q << "]: " << oss.str();
-                }
-            }
-
-            // Find pivots.
-            stats_.pivot_selection_timer_.Start();
-            SelectPivots(left, width, pivots);
-            stats_.pivot_selection_timer_.Stop();
-
-            LOG << "final pivots: " << VToStr(pivots);
-
-            // Get global ranks and shrink ranges.
-            stats_.search_step_timer_.Start();
-            GetGlobalRanks(pivots, global_ranks, local_ranks, left, width);
-
-            LOG << "global_ranks: " << global_ranks;
-            LOG << "local_ranks: " << local_ranks;
-
-            SearchStep(global_ranks, local_ranks, target_ranks, left, width);
-
-            if (debug) {
-                for (size_t q = 0; q < kNumInputs; q++) {
-                    std::ostringstream oss;
-                    for (size_t i = 0; i < p - 1; ++i) {
-                        if (i != 0) oss << " # ";
-                        oss << '[' << left[i][q] << ',' << left[i][q] + width[i][q] << ')';
-                    }
-                    LOG1 << "left/right[" << q << "]: " << oss.str();
-                }
-            }
-
-            // We check for accuracy of kNumInputs + 1
-            finished = true;
-            for (size_t i = 0; i < p - 1; i++) {
-                size_t a = global_ranks[i], b = target_ranks[i];
-                if (tlx::abs_diff(a, b) > kNumInputs + 1) {
-                    finished = false;
-                    break;
-                }
-            }
-
-            stats_.search_step_timer_.Stop();
-            stats_.iterations_++;
-        }
-        stats_.balancing_timer_.Stop();
-
-        LOG << "Finished after " << stats_.iterations_ << " iterations";
+        core::MultisequenceSelector<ValueType, Comparator, kNumInputs> selector(context_, comparator_);
+        selector.GetEquallyDistantSplitterRanks(files_, local_ranks, p - 1);
 
         LOG << "Creating channels";
 
