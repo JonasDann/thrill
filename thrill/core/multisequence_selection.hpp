@@ -220,16 +220,14 @@ private:
     using StatsTimer = common::StatsTimerBaseStopped<stats_enabled>;
 
     /*!
-     * Stats holds timers for measuring merge performance, that supports
+     * Stats holds timers for measuring multisequence selection performance, that supports
      * accumulating the output and printing it to the standard out stream.
      */
     class Stats
     {
     public:
-        //! A Timer accumulating all time spent in File operations.
+        //! A Timer accumulating all time spent in file operations.
         StatsTimer file_op_timer_;
-        //! A Timer accumulating all time spent while actually merging.
-        StatsTimer merge_timer_;
         //! A Timer accumulating all time spent while re-balancing the data.
         StatsTimer balancing_timer_;
         //! A Timer accumulating all time spent for selecting the global pivot
@@ -239,11 +237,6 @@ private:
         StatsTimer search_step_timer_;
         //! A Timer accumulating all time spent communicating.
         StatsTimer comm_timer_;
-        //! A Timer accumulating all time spent calling the scatter method of
-        //! the data subsystem.
-        StatsTimer scatter_timer_;
-        //! The count of all elements processed on this host.
-        size_t result_size_ = 0;
         //! The count of search iterations needed for balancing.
         size_t iterations_ = 0;
 
@@ -251,14 +244,12 @@ private:
                 const std::string& label, size_t p, size_t value) {
 
             LOG1 << "RESULT " << "operation=" << label << " time=" << value
-                 << " workers=" << p << " result_size_=" << result_size_;
+                 << " workers=" << p;
         }
 
         void Print(Context& ctx) {
             if (stats_enabled) {
                 size_t p = ctx.num_workers();
-                size_t merge =
-                        ctx.net.AllReduce(merge_timer_.Milliseconds()) / p;
                 size_t balance =
                         ctx.net.AllReduce(balancing_timer_.Milliseconds()) / p;
                 size_t pivot_selection =
@@ -269,19 +260,13 @@ private:
                         ctx.net.AllReduce(file_op_timer_.Milliseconds()) / p;
                 size_t comm =
                         ctx.net.AllReduce(comm_timer_.Milliseconds()) / p;
-                size_t scatter =
-                        ctx.net.AllReduce(scatter_timer_.Milliseconds()) / p;
-
-                result_size_ = ctx.net.AllReduce(result_size_);
 
                 if (ctx.my_rank() == 0) {
-                    PrintToSQLPlotTool("merge", p, merge);
                     PrintToSQLPlotTool("balance", p, balance);
                     PrintToSQLPlotTool("pivot_selection", p, pivot_selection);
                     PrintToSQLPlotTool("search_step", p, search_step);
                     PrintToSQLPlotTool("file_op", p, file_op);
                     PrintToSQLPlotTool("communication", p, comm);
-                    PrintToSQLPlotTool("scatter", p, scatter);
                     PrintToSQLPlotTool("iterations", p, iterations_);
                 }
             }
