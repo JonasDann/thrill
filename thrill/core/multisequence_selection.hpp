@@ -43,7 +43,7 @@ public:
     {}
 
     void GetEquallyDistantSplitterRanks(data::FilePtr files[kNumInputs],
-                          std::vector<ArrayNumInputsSizeT> out_local_ranks, size_t numSplitters)
+                          std::vector<ArrayNumInputsSizeT>& out_local_ranks, size_t numSplitters)
     {
         // *** Setup Environment for merging ***
 
@@ -107,8 +107,6 @@ public:
 
         // Auxillary array.
         std::vector<Pivot> pivots(numSplitters);
-
-        out_local_ranks.reserve(numSplitters);
 
         // Initialize all lefts with 0 and all widths with size of their
         // respective file.

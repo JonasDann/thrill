@@ -320,7 +320,7 @@ private:
         size_t p = context_.num_workers();
         LOG << "splitting to " << p << " workers";
 
-        std::vector<ArrayNumInputsSizeT> local_ranks;
+        std::vector<ArrayNumInputsSizeT> local_ranks(p - 1);
 
         core::MultisequenceSelector<ValueType, Comparator, kNumInputs> selector(context_, comparator_);
         selector.GetEquallyDistantSplitterRanks(files_, local_ranks, p - 1);
