@@ -264,12 +264,12 @@ private:
 
         std::vector<ArrayNumInputsSizeT> local_ranks(p - 1);
 
-        FileSequenceAdapter sequences_[kNumInputs];
-        for (int i = 0; i < kNumInputs; i++)
-            sequences_[i] = FileSequenceAdapter(files_[i]);
+        FileSequenceAdapter sequences[kNumInputs];
+        for (size_t i = 0; i < kNumInputs; i++)
+            sequences[i] = FileSequenceAdapter(files_[i]);
 
         core::MultisequenceSelector<FileSequenceAdapter, Comparator, kNumInputs> selector(context_, comparator_);
-        selector.GetEquallyDistantSplitterRanks(sequences_, local_ranks, p - 1);
+        selector.GetEquallyDistantSplitterRanks(sequences, local_ranks, p - 1);
 
         LOG << "Creating channels";
 

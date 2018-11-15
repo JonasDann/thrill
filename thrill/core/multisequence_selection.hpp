@@ -26,11 +26,15 @@
 namespace thrill {
 namespace core {
 
-template <typename ValueType>
+template <typename ValueType_>
 class MultisequenceSelectorFileSequenceAdapter
 {
 public:
-    MultisequenceSelectorFileSequenceAdapter(data::FilePtr& file)
+    typedef ValueType_ ValueType;
+
+    MultisequenceSelectorFileSequenceAdapter() = default;
+
+    explicit MultisequenceSelectorFileSequenceAdapter(data::FilePtr& file)
         : file_(file)
     {}
 
@@ -39,7 +43,7 @@ public:
         return file_->num_items();
     }
 
-    ValueType& operator [](size_t index) {
+    ValueType operator [](size_t index) {
         return file_->template GetItemAt<ValueType>(index);
     }
 
@@ -57,6 +61,8 @@ template <typename ValueType, typename ComparatorType>
 class MultisequenceSelectorVectorSequenceAdapter : public std::vector<ValueType>
 {
 public:
+    typedef ValueType Type;
+
     size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right)
     {
         (void) item;
