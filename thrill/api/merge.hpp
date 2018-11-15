@@ -192,6 +192,8 @@ private:
     //! Merge comparator
     Comparator comparator_;
 
+    using FileSequenceAdapter = core::MultisequenceSelectorFileSequenceAdapter<ValueType>;
+
     //! Whether the parent stack is empty
     const std::array<bool, kNumInputs> parent_stack_empty_;
 
@@ -262,8 +264,12 @@ private:
 
         std::vector<ArrayNumInputsSizeT> local_ranks(p - 1);
 
-        core::MultisequenceSelector<ValueType, Comparator, kNumInputs> selector(context_, comparator_);
-        selector.GetEquallyDistantSplitterRanks(files_, local_ranks, p - 1);
+        FileSequenceAdapter sequences_[kNumInputs];
+        for (int i = 0; i < kNumInputs; i++)
+            sequences_[i] = FileSequenceAdapter(files_[i]);
+
+        core::MultisequenceSelector<FileSequenceAdapter, Comparator, kNumInputs> selector(context_, comparator_);
+        selector.GetEquallyDistantSplitterRanks(sequences_, local_ranks, p - 1);
 
         LOG << "Creating channels";
 

@@ -26,9 +26,56 @@
 namespace thrill {
 namespace core {
 
-template <typename ValueType, typename Comparator, size_t kNumInputs>
+template <typename ValueType>
+class MultisequenceSelectorFileSequenceAdapter
+{
+public:
+    MultisequenceSelectorFileSequenceAdapter(data::FilePtr& file)
+        : file_(file)
+    {}
+
+    size_t size()
+    {
+        return file_->num_items();
+    }
+
+    ValueType& operator [](size_t index) {
+        return file_->template GetItemAt<ValueType>(index);
+    }
+
+    template<typename Comparator>
+    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& comparator)
+    {
+        return file_->GetIndexOf(item, tie, left, right, comparator);
+    }
+
+private:
+    data::FilePtr file_;
+};
+
+template <typename ValueType, typename ComparatorType>
+class MultisequenceSelectorVectorSequenceAdapter : public std::vector<ValueType>
+{
+public:
+    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right)
+    {
+        (void) item;
+        (void) tie;
+        (void) left;
+        (void) right;
+        // TODO Make vector adapter work
+        return 0;
+    }
+
+private:
+    ComparatorType comparator_;
+};
+
+template <typename SequenceAdapterType, typename Comparator, size_t kNumInputs>
 class MultisequenceSelector
 {
+    using ValueType = typename SequenceAdapterType::ValueType;
+
     static constexpr bool debug = true;
     static constexpr bool self_verify = debug && common::g_debug_mode;
 
@@ -42,7 +89,7 @@ public:
         : context_(context), comparator_(comparator)
     {}
 
-    void GetEquallyDistantSplitterRanks(data::FilePtr files[kNumInputs],
+    void GetEquallyDistantSplitterRanks(SequenceAdapterType sequences[kNumInputs],
                           std::vector<ArrayNumInputsSizeT>& out_local_ranks, size_t numSplitters)
     {
         // *** Setup Environment for merging ***
@@ -51,11 +98,12 @@ public:
         size_t local_size = 0;
 
         for (size_t i = 0; i < kNumInputs; i++) {
-            local_size += files[i]->num_items();
+            local_size += sequences[i].size();
         }
 
+        // TODO Make this work again
         // test that the data we got is sorted!
-        if (self_verify) {
+        /*if (self_verify) {
             for (size_t i = 0; i < kNumInputs; i++) {
                 auto reader = files[i]->GetKeepReader();
                 if (!reader.HasNext()) continue;
@@ -69,7 +117,7 @@ public:
                     prev = std::move(next);
                 }
             }
-        }
+        }*/
 
         // Count of all global elements.
         stats_.comm_timer_.Start();
@@ -112,7 +160,7 @@ public:
         // respective file.
         for (size_t r = 0; r < numSplitters; r++) {
             for (size_t q = 0; q < kNumInputs; q++) {
-                width[r][q] = files[q]->num_items();
+                width[r][q] = sequences[q].size();
             }
         }
 
@@ -140,14 +188,14 @@ public:
 
             // Find pivots.
             stats_.pivot_selection_timer_.Start();
-            SelectPivots(files, left, width, pivots);
+            SelectPivots(sequences, left, width, pivots);
             stats_.pivot_selection_timer_.Stop();
 
             LOG << "final pivots: " << VToStr(pivots);
 
             // Get global ranks and shrink ranges.
             stats_.search_step_timer_.Start();
-            GetGlobalRanks(files, pivots, global_ranks, out_local_ranks, left, width);
+            GetGlobalRanks(sequences, pivots, global_ranks, out_local_ranks, left, width);
 
             LOG << "global_ranks: " << global_ranks;
             LOG << "local_ranks: " << out_local_ranks;
@@ -186,7 +234,6 @@ public:
 private:
     Context& context_;
 
-    //! Merge comparator
     Comparator comparator_;
 
     struct Pivot {
@@ -290,7 +337,7 @@ private:
      * \param out_pivots The output pivots.
      */
     void SelectPivots(
-            data::FilePtr files[kNumInputs],
+            SequenceAdapterType sequences[kNumInputs],
             const std::vector<ArrayNumInputsSizeT>& left,
             const std::vector<ArrayNumInputsSizeT>& width,
             std::vector<Pivot>& out_pivots) {
@@ -315,9 +362,9 @@ private:
 
             if (width[s][mp] > 0) {
                 pivot_idx = left[s][mp] + (context_.rng_() % width[s][mp]);
-                assert(pivot_idx < files[mp]->num_items());
+                assert(pivot_idx < sequences[mp].size());
                 stats_.file_op_timer_.Start();
-                pivot_elem = files[mp]->template GetItemAt<ValueType>(pivot_idx);
+                pivot_elem = sequences[mp][pivot_idx];
                 stats_.file_op_timer_.Stop();
             }
 
@@ -343,7 +390,7 @@ private:
      * Additionally returns the local ranks so we can use them in the next step.
      */
     void GetGlobalRanks(
-            data::FilePtr files[kNumInputs],
+            SequenceAdapterType sequences[kNumInputs],
             const std::vector<Pivot>& pivots,
             std::vector<size_t>& global_ranks,
             std::vector<ArrayNumInputsSizeT>& out_local_ranks,
@@ -357,7 +404,7 @@ private:
             for (size_t i = 0; i < kNumInputs; i++) {
                 stats_.file_op_timer_.Start();
 
-                size_t idx = files[i]->GetIndexOf(
+                size_t idx = sequences[i].template GetIndexOf<Comparator>(
                         pivots[s].value, pivots[s].tie_idx,
                         left[s][i], left[s][i] + width[s][i],
                         comparator_);
