@@ -106,6 +106,9 @@ public:
 
         auto lop_chain = parent.stack().push(pre_op_fn).fold();
         parent.node()->AddChild(this, lop_chain);
+
+        // Count of all workers (and count of target partitions)
+        p_ = context_.num_workers();
     }
 
     void StartPreOp(size_t /* id */) final {
@@ -116,10 +119,14 @@ public:
     void PreOp(const ValueType& input) {
         if (current_run_.size() >= run_capacity_) {
             sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
-            context_.net.Barrier();
-            // TODO redistribute and save rest to file
-            core::MultisequenceSelector<ValueType, CompareFunction, 1> selector(context_, compare_function_);
 
+            LOG << "Calculating " << p_ - 1 << " splitters.";
+            std::vector<std::array<size_t, 1>> local_ranks(p_ - 1);
+            core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction, 1> selector(context_, compare_function_);
+            VectorSequenceAdapter runAsArray[1] = {current_run_};
+            selector.GetEquallyDistantSplitterRanks(runAsArray, local_ranks, p_ - 1);
+
+            // TODO redistribute and save rest to file
         }
         current_run_.push_back(input);
         local_items_++;
@@ -206,6 +213,10 @@ public:
     }
 
 private:
+    size_t p_;
+
+    using VectorSequenceAdapter = core::MultisequenceSelectorVectorSequenceAdapter<ValueType>;
+
     //! The comparison function which is applied to two elements.
     CompareFunction compare_function_;
 
@@ -216,7 +227,7 @@ private:
     //! \{
 
     //! Current run data
-    std::vector<ValueType> current_run_;
+    VectorSequenceAdapter current_run_;
     //! Runs in the first phase of the algorithm
     std::vector<data::File> runs_;
     //! Number of items on this worker

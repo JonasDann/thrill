@@ -57,24 +57,23 @@ private:
     data::FilePtr file_;
 };
 
-template <typename ValueType, typename ComparatorType>
-class MultisequenceSelectorVectorSequenceAdapter : public std::vector<ValueType>
+template <typename ValueType_>
+class MultisequenceSelectorVectorSequenceAdapter : public std::vector<ValueType_>
 {
 public:
-    typedef ValueType Type;
+    typedef ValueType_ ValueType;
 
-    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right)
+    template<typename Comparator>
+    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& comparator)
     {
         (void) item;
         (void) tie;
         (void) left;
         (void) right;
+        (void) comparator;
         // TODO Make vector adapter work
         return 0;
     }
-
-private:
-    ComparatorType comparator_;
 };
 
 template <typename SequenceAdapterType, typename Comparator, size_t kNumInputs>

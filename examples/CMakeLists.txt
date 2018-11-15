@@ -24,5 +24,6 @@ add_subdirectory(vfs_tool)
 add_subdirectory(word_count)
 add_subdirectory(stochastic_gradient_descent)
 add_subdirectory(bfs)
+add_subdirectory(canonical_merge_sort)
 
 ################################################################################

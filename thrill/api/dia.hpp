@@ -1637,6 +1637,20 @@ public:
                     const SortAlgorithm& sort_algorithm) const;
 
     /*!
+     * CanonicalMergeSort is a DOp, which sorts a given DIA according to the given compare_function.
+     *
+     * \tparam CompareFunction Type of the compare_function.
+     *  Should be (ValueType,ValueType)->bool
+     *
+     * \param compare_function Function, which compares two elements. Returns
+     * true, if first element is smaller than second. False otherwise.
+     *
+     * \ingroup dia_dops
+     */
+    template <typename CompareFunction = std::less<ValueType> >
+    auto CanonicalMergeSort(const CompareFunction& compare_function = CompareFunction()) const;
+
+    /*!
      * Merge is a DOp, which merges two sorted DIAs to a single sorted DIA.
      * Both input DIAs must be used sorted conforming to the given comparator.
      * The type of the output DIA will be the type of this DIA.
