@@ -204,38 +204,7 @@ private:
     //! Array of inbound CatStreams
     data::CatStreamPtr streams_[kNumInputs];
 
-    struct Pivot {
-        ValueType value;
-        size_t    tie_idx;
-        size_t    segment_len;
-    };
-
-    //! Count of items on all prev workers.
-    size_t prefix_size_;
-
     using ArrayNumInputsSizeT = std::array<size_t, kNumInputs>;
-
-    //! Logging helper to print vectors of vectors of pivots.
-    static std::string VToStr(const std::vector<Pivot>& data) {
-        std::stringstream oss;
-        for (const Pivot& elem : data) {
-            oss << "(" << elem.value
-                << ", itie: " << elem.tie_idx
-                << ", len: " << elem.segment_len << ") ";
-        }
-        return oss.str();
-    }
-
-    //! Reduce functor that returns the pivot originating from the biggest
-    //! range.  That removes some nasty corner cases, like selecting the same
-    //! pivot over and over again from a tiny range.
-    class ReducePivots
-    {
-    public:
-        Pivot operator () (const Pivot& a, const Pivot& b) const {
-            return a.segment_len > b.segment_len ? a : b;
-        }
-    };
 
     using StatsTimer = common::StatsTimerBaseStopped<stats_enabled>;
 
@@ -246,26 +215,13 @@ private:
     class Stats
     {
     public:
-        //! A Timer accumulating all time spent in File operations.
-        StatsTimer file_op_timer_;
         //! A Timer accumulating all time spent while actually merging.
         StatsTimer merge_timer_;
-        //! A Timer accumulating all time spent while re-balancing the data.
-        StatsTimer balancing_timer_;
-        //! A Timer accumulating all time spent for selecting the global pivot
-        //! elements.
-        StatsTimer pivot_selection_timer_;
-        //! A Timer accumulating all time spent in global search steps.
-        StatsTimer search_step_timer_;
-        //! A Timer accumulating all time spent communicating.
-        StatsTimer comm_timer_;
         //! A Timer accumulating all time spent calling the scatter method of
         //! the data subsystem.
         StatsTimer scatter_timer_;
         //! The count of all elements processed on this host.
         size_t result_size_ = 0;
-        //! The count of search iterations needed for balancing.
-        size_t iterations_ = 0;
 
         void PrintToSQLPlotTool(
             const std::string& label, size_t p, size_t value) {
@@ -279,16 +235,6 @@ private:
                 size_t p = ctx.num_workers();
                 size_t merge =
                     ctx.net.AllReduce(merge_timer_.Milliseconds()) / p;
-                size_t balance =
-                    ctx.net.AllReduce(balancing_timer_.Milliseconds()) / p;
-                size_t pivot_selection =
-                    ctx.net.AllReduce(pivot_selection_timer_.Milliseconds()) / p;
-                size_t search_step =
-                    ctx.net.AllReduce(search_step_timer_.Milliseconds()) / p;
-                size_t file_op =
-                    ctx.net.AllReduce(file_op_timer_.Milliseconds()) / p;
-                size_t comm =
-                    ctx.net.AllReduce(comm_timer_.Milliseconds()) / p;
                 size_t scatter =
                     ctx.net.AllReduce(scatter_timer_.Milliseconds()) / p;
 
@@ -296,13 +242,7 @@ private:
 
                 if (ctx.my_rank() == 0) {
                     PrintToSQLPlotTool("merge", p, merge);
-                    PrintToSQLPlotTool("balance", p, balance);
-                    PrintToSQLPlotTool("pivot_selection", p, pivot_selection);
-                    PrintToSQLPlotTool("search_step", p, search_step);
-                    PrintToSQLPlotTool("file_op", p, file_op);
-                    PrintToSQLPlotTool("communication", p, comm);
                     PrintToSQLPlotTool("scatter", p, scatter);
-                    PrintToSQLPlotTool("iterations", p, iterations_);
                 }
             }
         }
