@@ -84,10 +84,10 @@ public:
         std::vector<size_t> target_ranks(numSplitters);
 
         for (size_t r = 0; r < numSplitters; r++) {
-            target_ranks[r] = (global_size / numSplitters) * (r + 1);
+            target_ranks[r] = (global_size / (numSplitters + 1)) * (r + 1);
             // Modify all ranks 0..(globalSize % p), in case global_size is not
             // divisible by p.
-            if (r < global_size % numSplitters)
+            if (r < global_size % (numSplitters + 1))
                 target_ranks[r] += 1;
         }
 
