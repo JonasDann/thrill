@@ -64,15 +64,41 @@ public:
     typedef ValueType_ ValueType;
 
     template<typename Comparator>
-    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& comparator)
+    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& less)
     {
-        (void) item;
-        (void) tie;
-        (void) left;
-        (void) right;
-        (void) comparator;
-        // TODO Make vector adapter work
-        return 0;
+        static constexpr bool debug = false;
+
+        static_assert(
+                std::is_convertible<
+                        bool, typename common::FunctionTraits<Comparator>::result_type
+                >::value,
+                "Comperator must return boolean.");
+
+        LOG << "MultisequenceSelectorVectorSequenceAdapter::GetIndexOf() looking for item " << item << " tie " << tie
+            << " in range [" << left << "," << right << ") ="
+            << " size " << right - left;
+
+        assert(left <= right);
+        assert(left <= std::vector<ValueType>::size());
+        assert(right <= std::vector<ValueType>::size());
+
+        // Use a binary search to find the item.
+        while (left < right) {
+            size_t mid = (right + left) >> 1;
+            LOG << "left: " << left << "right: " << right << "mid: " << mid;
+            ValueType currentItem = std::vector<ValueType>::operator [](mid);
+            LOG << "Item at mid: " << currentItem;
+            if (less(item, currentItem) ||
+                (!less(item, currentItem) && !less(currentItem, item) &&
+                  tie <= mid)) {
+                right = mid;
+            }
+            else {
+                left = mid + 1;
+            }
+        }
+
+        return left;
     }
 };
 
@@ -222,7 +248,7 @@ public:
             finished = true;
             for (size_t i = 0; i < numSplitters; i++) {
                 size_t a = global_ranks[i], b = target_ranks[i];
-                if (tlx::abs_diff(a, b) > kNumInputs + 1) {
+                if (tlx::abs_diff(a, b) > kNumInputs + 5) {
                     finished = false;
                     break;
                 }

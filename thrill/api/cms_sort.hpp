@@ -116,17 +116,22 @@ public:
         current_run_.reserve(run_capacity_);
     }
 
+    void FinishCurrentRun() {
+        sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
+
+        LOG << "Calculating " << p_ - 1 << " splitters.";
+        std::vector<std::array<size_t, 1>> local_ranks(p_ - 1);
+        core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction, 1> selector(context_, compare_function_);
+        VectorSequenceAdapter runAsArray[1] = {current_run_};
+        selector.GetEquallyDistantSplitterRanks(runAsArray, local_ranks, p_ - 1);
+        LOG << "Local splitters: " << local_ranks;
+
+        // TODO redistribute and save rest to file
+    }
+
     void PreOp(const ValueType& input) {
         if (current_run_.size() >= run_capacity_) {
-            sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
-
-            LOG << "Calculating " << p_ - 1 << " splitters.";
-            std::vector<std::array<size_t, 1>> local_ranks(p_ - 1);
-            core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction, 1> selector(context_, compare_function_);
-            VectorSequenceAdapter runAsArray[1] = {current_run_};
-            selector.GetEquallyDistantSplitterRanks(runAsArray, local_ranks, p_ - 1);
-
-            // TODO redistribute and save rest to file
+            FinishCurrentRun();
         }
         current_run_.push_back(input);
         local_items_++;
@@ -142,7 +147,7 @@ public:
 
     void StopPreOp(size_t /* id */) final {
         if (current_run_.size() > 0) {
-            sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
+            FinishCurrentRun();
         }
 
         timer_preop_.Stop();

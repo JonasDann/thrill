@@ -128,7 +128,7 @@ int main(int argc, char* argv[]) {
             if (ctx.my_rank() == 0) {
                 auto traffic = ctx.net_manager().Traffic();
                 LOG1 << "RESULT"
-                     << " benchmark=terasort"
+                     << " example=canonical_merge_sort"
                      << " time=" << timer
                      << " traffic=" << traffic.total()
                      << " hosts=" << ctx.num_hosts();
