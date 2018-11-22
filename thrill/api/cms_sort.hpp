@@ -85,7 +85,7 @@ class CanonicalMergeSortNode final : public DOpNode<ValueType>
         }
     };
 
-    static const size_t run_capacity_ = 1000;
+    static const size_t run_capacity_ = 15;
 
 public:
     /*!
@@ -116,19 +116,6 @@ public:
         current_run_.reserve(run_capacity_);
     }
 
-    void FinishCurrentRun() {
-        sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
-
-        LOG << "Calculating " << p_ - 1 << " splitters.";
-        std::vector<std::array<size_t, 1>> local_ranks(p_ - 1);
-        core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction, 1> selector(context_, compare_function_);
-        VectorSequenceAdapter runAsArray[1] = {current_run_};
-        selector.GetEquallyDistantSplitterRanks(runAsArray, local_ranks, p_ - 1);
-        LOG << "Local splitters: " << local_ranks;
-
-        // TODO redistribute and save rest to file
-    }
-
     void PreOp(const ValueType& input) {
         if (current_run_.size() >= run_capacity_) {
             FinishCurrentRun();
@@ -140,7 +127,7 @@ public:
     //! Receive a whole data::File of ValueType, but only if our stack is empty.
     bool OnPreOpFile(const data::File& file, size_t /* parent_index */) final {
         (void) file;
-        // TODO Sort whole file and redistribute
+        // TODO What should this do?
 
         return false;
     }
@@ -173,35 +160,16 @@ public:
     }
 
     DIAMemUse PushDataMemUse() final {
-        //TODO What does this do?
-        if (files_.size() <= 1) {
-            // direct push, no merge necessary
-            return 0;
-        }
-        else {
-            // need to perform multiway merging
-            return DIAMemUse::Max();
-        }
+        // TODO What does this do? Make it work.
+        return 0;
     }
 
     void PushData(bool consume) final {
         Timer timer_pushdata;
         timer_pushdata.Start();
 
-        size_t local_size = 0;
-        if (files_.size() == 0) {
-            // nothing to push
-        }
-        else if (files_.size() == 1) {
-            local_size = files_[0].num_items();
-            this->PushFile(files_[0], consume);
-        }
-        else {
-            MultiwayMergeTree MakeMultiwayMergeTree;
-            (void) MakeMultiwayMergeTree;
-
-            // TODO Merge files
-        }
+        // TODO Push.
+        (void) consume;
 
         timer_pushdata.Stop();
 
@@ -209,18 +177,21 @@ public:
             context_.PrintCollectiveMeanStdev(
                 "Sort() timer_pushdata", timer_pushdata.SecondsDouble());
 
-            context_.PrintCollectiveMeanStdev("Sort() local_size", local_size);
+            //context_.PrintCollectiveMeanStdev("Sort() local_size", local_size);
         }
     }
 
     void Dispose() final {
-        files_.clear();
+        // TODO This may need to do something.
     }
 
 private:
     size_t p_;
 
     using VectorSequenceAdapter = core::MultisequenceSelectorVectorSequenceAdapter<ValueType>;
+    using MultisequenceSelector = core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction, 1>;
+
+    using LocalRanks = std::vector<std::array<size_t, 1>>;
 
     //! The comparison function which is applied to two elements.
     CompareFunction compare_function_;
@@ -234,7 +205,7 @@ private:
     //! Current run data
     VectorSequenceAdapter current_run_;
     //! Runs in the first phase of the algorithm
-    std::vector<data::File> runs_;
+    std::vector<data::File> run_files_;
     //! Number of items on this worker
     size_t local_items_ = 0;
 
@@ -243,10 +214,7 @@ private:
     //! \name MainOp and PushData
     //! \{
 
-    //! Local data files
-    std::deque<data::File> files_;
-    //! Total number of local elements after communication
-    size_t local_out_size_ = 0;
+
 
     //! \}
 
@@ -264,8 +232,64 @@ private:
 
     //! \}
 
+    void FinishCurrentRun() {
+        /* Phase 1 {*/
+        // Sort Locally
+        timer_sort_.Start();
+        sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
+        timer_sort_.Stop();
+
+        // Calculate Splitters
+        auto splitter_count = p_ - 1;
+        LOG << "Calculating " << splitter_count << " splitters.";
+        LocalRanks local_ranks(splitter_count);
+        MultisequenceSelector selector(context_, compare_function_);
+        VectorSequenceAdapter run_as_array[1] = {current_run_};
+        selector.GetEquallyDistantSplitterRanks(run_as_array, local_ranks, splitter_count);
+        LOG << "Local splitters: " << local_ranks;
+
+        // Redistribute Elements
+        auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
+        auto data_writers = data_stream->GetWriters();
+
+        size_t my_rank = context_.my_rank();
+        size_t worker_rank = 0;
+        for (size_t i = 0; i < current_run_.size(); i++) {
+            if (worker_rank < splitter_count && local_ranks[worker_rank][0] <= i)
+                worker_rank++;
+
+            // TODO Optimize this so current_run_ is directly sent as blocks.
+            data_writers[worker_rank].template Put<ValueType>(current_run_[i]);
+        }
+        local_items_ = (my_rank == (p_ - 1) ? local_ranks[my_rank][0] : current_run_.size()) -
+                       (my_rank == 0 ? 0 : local_ranks[my_rank - 1][0]);
+        current_run_.clear();
+
+        for (worker_rank = 0; worker_rank < p_; worker_rank++) {
+            data_writers[worker_rank].Close();
+        }
+
+        auto data_readers = data_stream->GetReaders();
+        auto multiway_merge_tree = core::make_multiway_merge_tree<ValueType>(
+                data_readers.begin(), data_readers.end(), compare_function_);
+
+        run_files_.emplace_back(context_.GetFile(this));
+        auto current_run_file_writer = run_files_.back().GetWriter();
+        while (multiway_merge_tree.HasNext()) {
+            auto next = multiway_merge_tree.Next();
+            current_run_file_writer.template Put<ValueType>(next);
+            LOG << next;
+        }
+        current_run_file_writer.Close();
+        LOG << run_files_.back().num_items();
+
+        data_stream.reset();
+        /* } Phase 1 */
+    }
+
     void MainOp() {
-        // TODO redistribute globally over all runs
+        /* Phase 2 { */
+        // TODO Redistribute globally over all runs.
     }
 };
 
