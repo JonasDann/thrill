@@ -102,10 +102,11 @@ public:
     }
 };
 
-template <typename SequenceAdapterType, typename Comparator, size_t kNumInputs>
+template <typename SequenceAdapterType, typename Comparator>
 class MultisequenceSelector
 {
     using ValueType = typename SequenceAdapterType::ValueType;
+    using SequenceAdapters = typename std::vector<SequenceAdapterType>;
 
     static constexpr bool debug = true;
     static constexpr bool self_verify = debug && common::g_debug_mode;
@@ -113,29 +114,29 @@ class MultisequenceSelector
     //! Set this variable to true to enable generation and output of merge stats
     static constexpr bool stats_enabled = true;
 
-    using ArrayNumInputsSizeT = std::array<size_t, kNumInputs>;
-
 public:
     MultisequenceSelector(Context& context, const Comparator& comparator)
         : context_(context), comparator_(comparator)
     {}
 
-    void GetEquallyDistantSplitterRanks(SequenceAdapterType sequences[kNumInputs],
-                          std::vector<ArrayNumInputsSizeT>& out_local_ranks, size_t numSplitters)
+    void GetEquallyDistantSplitterRanks(SequenceAdapters sequences,
+                          std::vector<std::vector<size_t>>& out_local_ranks, size_t splitter_count)
     {
         // *** Setup Environment for merging ***
+
+        auto seq_count = sequences.size();
 
         // Count of all local elements.
         size_t local_size = 0;
 
-        for (size_t i = 0; i < kNumInputs; i++) {
+        for (size_t i = 0; i < sequences.size(); i++) {
             local_size += sequences[i].size();
         }
 
         // TODO Make this work again
         // test that the data we got is sorted!
         /*if (self_verify) {
-            for (size_t i = 0; i < kNumInputs; i++) {
+            for (size_t i = 0; i < ---; i++) {
                 auto reader = files[i]->GetKeepReader();
                 if (!reader.HasNext()) continue;
 
@@ -160,13 +161,13 @@ public:
 
         // Calculate and remember the ranks we search for.  In our case, we
         // search for ranks that split the data into equal parts.
-        std::vector<size_t> target_ranks(numSplitters);
+        std::vector<size_t> target_ranks(splitter_count);
 
-        for (size_t r = 0; r < numSplitters; r++) {
-            target_ranks[r] = (global_size / (numSplitters + 1)) * (r + 1);
+        for (size_t r = 0; r < splitter_count; r++) {
+            target_ranks[r] = (global_size / (splitter_count + 1)) * (r + 1);
             // Modify all ranks 0..(globalSize % p), in case global_size is not
             // divisible by p.
-            if (r < global_size % (numSplitters + 1))
+            if (r < global_size % (splitter_count + 1))
                 target_ranks[r] += 1;
         }
 
@@ -179,18 +180,20 @@ public:
         }
 
         // buffer for the global ranks of selected pivots
-        std::vector<size_t> global_ranks(numSplitters);
+        std::vector<size_t> global_ranks(splitter_count);
 
         // Search range bounds.
-        std::vector<ArrayNumInputsSizeT> left(numSplitters), width(numSplitters);
+        std::vector<std::vector<size_t>>
+                left(splitter_count, std::vector<size_t>(seq_count)),
+                width(splitter_count, std::vector<size_t>(seq_count));
 
         // Auxillary array.
-        std::vector<Pivot> pivots(numSplitters);
+        std::vector<Pivot> pivots(splitter_count);
 
         // Initialize all lefts with 0 and all widths with size of their
         // respective file.
-        for (size_t r = 0; r < numSplitters; r++) {
-            for (size_t q = 0; q < kNumInputs; q++) {
+        for (size_t r = 0; r < splitter_count; r++) {
+            for (size_t q = 0; q < sequences.size(); q++) {
                 width[r][q] = sequences[q].size();
             }
         }
@@ -207,9 +210,9 @@ public:
             LOG0 << "width: " << width;
 
             if (debug) {
-                for (size_t q = 0; q < kNumInputs; q++) {
+                for (size_t q = 0; q < seq_count; q++) {
                     std::ostringstream oss;
-                    for (size_t i = 0; i < numSplitters; ++i) {
+                    for (size_t i = 0; i < splitter_count; ++i) {
                         if (i != 0) oss << " # ";
                         oss << '[' << left[i][q] << ',' << left[i][q] + width[i][q] << ')';
                     }
@@ -234,9 +237,9 @@ public:
             SearchStep(global_ranks, out_local_ranks, target_ranks, left, width);
 
             if (debug) {
-                for (size_t q = 0; q < kNumInputs; q++) {
+                for (size_t q = 0; q < seq_count; q++) {
                     std::ostringstream oss;
-                    for (size_t i = 0; i < numSplitters; ++i) {
+                    for (size_t i = 0; i < splitter_count; ++i) {
                         if (i != 0) oss << " # ";
                         oss << '[' << left[i][q] << ',' << left[i][q] + width[i][q] << ')';
                     }
@@ -244,11 +247,11 @@ public:
                 }
             }
 
-            // We check for accuracy of kNumInputs + 1
+            // We check for accuracy of sequences.size() + 5
             finished = true;
-            for (size_t i = 0; i < numSplitters; i++) {
+            for (size_t i = 0; i < splitter_count; i++) {
                 size_t a = global_ranks[i], b = target_ranks[i];
-                if (tlx::abs_diff(a, b) > kNumInputs + 5) {
+                if (tlx::abs_diff(a, b) > sequences.size() + 5) {
                     finished = false;
                     break;
                 }
@@ -368,9 +371,9 @@ private:
      * \param out_pivots The output pivots.
      */
     void SelectPivots(
-            SequenceAdapterType sequences[kNumInputs],
-            const std::vector<ArrayNumInputsSizeT>& left,
-            const std::vector<ArrayNumInputsSizeT>& width,
+            SequenceAdapters sequences,
+            const std::vector<std::vector<size_t>>& left,
+            const std::vector<std::vector<size_t>>& width,
             std::vector<Pivot>& out_pivots) {
 
         // Select a random pivot for the largest range we have for each
@@ -421,18 +424,18 @@ private:
      * Additionally returns the local ranks so we can use them in the next step.
      */
     void GetGlobalRanks(
-            SequenceAdapterType sequences[kNumInputs],
+            SequenceAdapters sequences,
             const std::vector<Pivot>& pivots,
             std::vector<size_t>& global_ranks,
-            std::vector<ArrayNumInputsSizeT>& out_local_ranks,
-            const std::vector<ArrayNumInputsSizeT>& left,
-            const std::vector<ArrayNumInputsSizeT>& width) {
+            std::vector<std::vector<size_t>>& out_local_ranks,
+            const std::vector<std::vector<size_t>>& left,
+            const std::vector<std::vector<size_t>>& width) {
 
         // Simply get the rank of each pivot in each file. Sum the ranks up
         // locally.
         for (size_t s = 0; s < pivots.size(); s++) {
             size_t rank = 0;
-            for (size_t i = 0; i < kNumInputs; i++) {
+            for (size_t i = 0; i < sequences.size(); i++) {
                 stats_.file_op_timer_.Start();
 
                 size_t idx = sequences[i].template GetIndexOf<Comparator>(
@@ -475,10 +478,10 @@ private:
      */
     void SearchStep(
             const std::vector<size_t>& global_ranks,
-            const std::vector<ArrayNumInputsSizeT>& local_ranks,
+            const std::vector<std::vector<size_t>>& local_ranks,
             const std::vector<size_t>& target_ranks,
-            std::vector<ArrayNumInputsSizeT>& left,
-            std::vector<ArrayNumInputsSizeT>& width) {
+            std::vector<std::vector<size_t>>& left,
+            std::vector<std::vector<size_t>>& width) {
 
         for (size_t s = 0; s < width.size(); s++) {
             for (size_t p = 0; p < width[s].size(); p++) {

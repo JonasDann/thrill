@@ -189,9 +189,12 @@ private:
     size_t p_;
 
     using VectorSequenceAdapter = core::MultisequenceSelectorVectorSequenceAdapter<ValueType>;
-    using MultisequenceSelector = core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction, 1>;
+    using MultiVectorSelector = core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction>;
 
-    using LocalRanks = std::vector<std::array<size_t, 1>>;
+    using FileSequenceAdapter = core::MultisequenceSelectorFileSequenceAdapter<ValueType>;
+    using MultiFileSelector = core::MultisequenceSelector<FileSequenceAdapter, CompareFunction>;
+
+    using LocalRanks = std::vector<std::vector<size_t>>;
 
     //! The comparison function which is applied to two elements.
     CompareFunction compare_function_;
@@ -199,13 +202,15 @@ private:
     //! Sort function class
     SortAlgorithm sort_algorithm_;
 
+    MultiVectorSelector vector_selector_ {context_, compare_function_};
+
     //! \name PreOp Phase
     //! \{
 
     //! Current run data
     VectorSequenceAdapter current_run_;
     //! Runs in the first phase of the algorithm
-    std::vector<data::File> run_files_;
+    std::vector<data::FilePtr> run_files_;
     //! Number of items on this worker
     size_t local_items_ = 0;
 
@@ -232,9 +237,83 @@ private:
 
     //! \}
 
+    class VectorConsumeReaderAdapter {
+    public:
+        using ValueTypeVector = std::vector<ValueType>;
+        using ValueTypeVectorIterator = typename std::vector<ValueType>::iterator;
+
+        VectorConsumeReaderAdapter(ValueTypeVector& vector)
+        : vector_(vector),
+          current_(vector.begin())
+        {}
+
+        template <typename T>
+        ValueType Next() {
+            assert(HasNext());
+            return *(++current_);
+        }
+
+        bool HasNext() {
+            return std::next(current_) != vector_.end();
+        }
+
+        void Skip(size_t items, size_t bytes) {
+            (void) bytes;
+            current_ += items;
+        }
+
+        bool typecode_verify() {
+            return false;
+        }
+    private:
+        ValueTypeVector& vector_;
+        ValueTypeVectorIterator current_;
+    };
+
+    template <typename SequenceReaderType, bool skip_local>
+    void TransmitElements(std::vector<SequenceReaderType>& seq_readers, data::StreamData::Writers& data_writers, LocalRanks& local_ranks) {
+        size_t my_rank = context_.my_rank();
+        size_t seq_count = seq_readers.size();
+        size_t splitter_count = local_ranks.size();
+        for (size_t seq_index = 0; seq_index < seq_count; seq_index++) {
+            LOG << "Transmitting element of sequence " << seq_index << ".";
+            auto seq_reader = &seq_readers[seq_index];
+            size_t worker_rank = 0;
+            size_t i = 0;
+            LOG << "Worker rank " << worker_rank << ".";
+            while (seq_reader->HasNext()) {
+                while (worker_rank < splitter_count && local_ranks[worker_rank][seq_index] <= i) {
+                    worker_rank++;
+                    LOG << "Worker rank " << worker_rank << ".";
+                }
+
+                if (skip_local && worker_rank == my_rank) {
+                    // if last worker
+                    if (my_rank == splitter_count) {
+                        LOG << "Go to next sequence.";
+                        break;
+                    } else {
+                        const size_t items = local_ranks[worker_rank][seq_index] - i;
+                        LOG << "Skip " << items <<" elements.";
+                        const size_t bytes_per_item =
+                                (seq_reader->typecode_verify() ? sizeof(size_t) : 0)
+                                + data::Serialization<data::File::ConsumeReader, ValueType>::fixed_size;
+                        seq_reader->Skip(items, items * bytes_per_item);
+                        i += items;
+                    }
+                } else {
+                    auto next = seq_reader->template Next<ValueType>();
+                    data_writers[worker_rank].template Put<ValueType>(next);
+                    i++;
+                }
+            }
+        }
+    }
+
     void FinishCurrentRun() {
         /* Phase 1 {*/
         // Sort Locally
+        LOG << "Sort run locally.";
         timer_sort_.Start();
         sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
         timer_sort_.Stop();
@@ -242,46 +321,39 @@ private:
         // Calculate Splitters
         auto splitter_count = p_ - 1;
         LOG << "Calculating " << splitter_count << " splitters.";
-        LocalRanks local_ranks(splitter_count);
-        MultisequenceSelector selector(context_, compare_function_);
-        VectorSequenceAdapter run_as_array[1] = {current_run_};
-        selector.GetEquallyDistantSplitterRanks(run_as_array, local_ranks, splitter_count);
+        LocalRanks local_ranks(splitter_count, std::vector<size_t>(1));
+        std::vector<VectorSequenceAdapter> current_run_vector(1);
+        current_run_vector[0] = current_run_;
+        vector_selector_.GetEquallyDistantSplitterRanks(current_run_vector, local_ranks, splitter_count);
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
         auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
         auto data_writers = data_stream->GetWriters();
+        std::vector<VectorConsumeReaderAdapter> current_run_reader(1, VectorConsumeReaderAdapter(current_run_));
 
-        size_t my_rank = context_.my_rank();
-        size_t worker_rank = 0;
-        for (size_t i = 0; i < current_run_.size(); i++) {
-            if (worker_rank < splitter_count && local_ranks[worker_rank][0] <= i)
-                worker_rank++;
-
-            // TODO Optimize this so current_run_ is directly sent as blocks.
-            data_writers[worker_rank].template Put<ValueType>(current_run_[i]);
-        }
-        local_items_ = (my_rank == (p_ - 1) ? local_ranks[my_rank][0] : current_run_.size()) -
-                       (my_rank == 0 ? 0 : local_ranks[my_rank - 1][0]);
+        LOG << "Transmitting elements.";
+        TransmitElements<VectorConsumeReaderAdapter, false>(current_run_reader, data_writers, local_ranks);
         current_run_.clear();
-
-        for (worker_rank = 0; worker_rank < p_; worker_rank++) {
+        for (size_t worker_rank = 0; worker_rank < p_; worker_rank++) {
             data_writers[worker_rank].Close();
         }
 
         auto data_readers = data_stream->GetReaders();
+        LOG << "Building merge tree.";
         auto multiway_merge_tree = core::make_multiway_merge_tree<ValueType>(
                 data_readers.begin(), data_readers.end(), compare_function_);
 
-        run_files_.emplace_back(context_.GetFile(this));
-        auto current_run_file_writer = run_files_.back().GetWriter();
+        LOG << "Merging into run file.";
+        run_files_.emplace_back(context_.GetFilePtr(this));
+        auto current_run_file_writer = run_files_.back()->GetWriter();
         while (multiway_merge_tree.HasNext()) {
             auto next = multiway_merge_tree.Next();
             current_run_file_writer.template Put<ValueType>(next);
             LOG << next;
         }
         current_run_file_writer.Close();
-        LOG << run_files_.back().num_items();
+        LOG << "Finished run has " << run_files_.back()->num_items() << " elements.";
 
         data_stream.reset();
         /* } Phase 1 */
@@ -289,7 +361,41 @@ private:
 
     void MainOp() {
         /* Phase 2 { */
-        // TODO Redistribute globally over all runs.
+        LOG << "Phase 2.";
+        // Calculate Splitters
+        auto splitter_count = p_ - 1;
+        auto run_count = run_files_.size();
+        LOG << "Calculating " << splitter_count << " splitters.";
+        LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
+        MultiFileSelector selector(context_, compare_function_);
+        std::vector<FileSequenceAdapter> run_file_adapters(run_count);
+        for (size_t i = 0; i < run_count; i++) {
+            run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
+        }
+        selector.GetEquallyDistantSplitterRanks(run_file_adapters, local_ranks, splitter_count);
+        LOG << "Local splitters: " << local_ranks;
+
+        // Redistribute Elements
+        auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
+        auto data_writers = data_stream->GetWriters();
+        std::vector<data::File::ConsumeReader> run_readers;
+        for (size_t i = 0; i < run_count; i++) {
+            run_readers.emplace_back(run_files_[i]->GetConsumeReader());
+        }
+
+        LOG << "Transmitting elements.";
+        TransmitElements<data::File::ConsumeReader, true>(run_readers, data_writers, local_ranks);
+        for (size_t worker_rank = 0; worker_rank < p_; worker_rank++) {
+            data_writers[worker_rank].Close();
+        }
+
+        auto data_readers = data_stream->GetReaders();
+        /* } Phase 2 */
+
+        /* Phase 3 { */
+        LOG << "Phase 3.";
+        // TODO Phase 3: Merge everything.
+        /* } Phase 3 */
     }
 };
 
