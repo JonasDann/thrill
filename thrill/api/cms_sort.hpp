@@ -36,6 +36,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include "../data/block_reader.hpp"
 
 namespace thrill {
 namespace api {
@@ -275,6 +276,7 @@ private:
         size_t my_rank = context_.my_rank();
         size_t seq_count = seq_readers.size();
         size_t splitter_count = local_ranks.size();
+        // TODO Refactor sequence stuff out of here. Elements need to be transmitted in order, which is not possible like that.
         for (size_t seq_index = 0; seq_index < seq_count; seq_index++) {
             LOG << "Transmitting element of sequence " << seq_index << ".";
             auto seq_reader = &seq_readers[seq_index];
@@ -304,6 +306,7 @@ private:
                 } else {
                     auto next = seq_reader->template Next<ValueType>();
                     data_writers[worker_rank].template Put<ValueType>(next);
+                    LOG << next;
                     i++;
                 }
             }
@@ -376,6 +379,7 @@ private:
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
+        // TODO Do redistribute step as loop over run files
         auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
         auto data_writers = data_stream->GetWriters();
         std::vector<data::File::ConsumeReader> run_readers;
@@ -390,11 +394,45 @@ private:
         }
 
         auto data_readers = data_stream->GetReaders();
+        auto correction_file = context_.GetFilePtr(this);
+        auto correction_file_writer = correction_file->GetWriter();
+
+        LOG << "Building correction step merge tree.";
+        auto correction_merge_tree = core::make_multiway_merge_tree<ValueType>(
+                data_readers.begin(), data_readers.end(), compare_function_);
+
+        LOG << "Merging to correction file.";
+        while (correction_merge_tree.HasNext()) {
+            auto next = correction_merge_tree.Next();
+            correction_file_writer.template Put<ValueType>(next);
+            LOG << next;
+        }
+        correction_file_writer.Close();
         /* } Phase 2 */
 
         /* Phase 3 { */
         LOG << "Phase 3.";
-        // TODO Phase 3: Merge everything.
+        std::vector<data::File::ConsumeReader> file_readers;
+        LOG << "Correction file has size " << correction_file->num_items();
+        file_readers.emplace_back(correction_file->GetConsumeReader());
+        for (size_t i = 0; i < run_count; i++) {
+            LOG << "Run file " << i << " has size " << run_files_[i]->num_items();
+            file_readers.emplace_back(run_files_[i]->GetConsumeReader());
+            // TODO Consume reader consumes unconditionally all the elements. Cannot be used? But what to use instead?
+        }
+
+        LOG << "Building merge tree.";
+        auto file_merge_tree = core::make_multiway_merge_tree<ValueType>(
+                file_readers.begin(), file_readers.end(), compare_function_);
+
+        LOG << "Merging.";
+        while (file_merge_tree.HasNext()) {
+            auto next = file_merge_tree.Next();
+            LOG << next;
+        }
+        LOG << "Finished merging.";
+
+        data_stream.reset();
         /* } Phase 3 */
     }
 };
