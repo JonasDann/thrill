@@ -61,6 +61,7 @@ template <
     typename SortAlgorithm>
 class CanonicalMergeSortNode final : public DOpNode<ValueType>
 {
+    // TODO Unit test
     static constexpr bool debug = true;
 
     //! Set this variable to true to enable generation and output of stats
@@ -73,18 +74,6 @@ class CanonicalMergeSortNode final : public DOpNode<ValueType>
     using Timer = common::StatsTimerBaseStopped<stats_enabled>;
     //! RIAA class for running the timer
     using RunTimer = common::RunTimer<Timer>;
-
-    struct MultiwayMergeTree {
-        template <typename ReaderIterator,
-                  typename Comparator = std::less<ValueType> >
-        auto operator () (
-            ReaderIterator seqs_begin, ReaderIterator seqs_end,
-            const Comparator& comp = Comparator()) {
-
-            return core::make_multiway_merge_tree<ValueType>(
-                seqs_begin, seqs_end, comp);
-        }
-    };
 
     static const size_t run_capacity_ = 15;
 
@@ -169,7 +158,7 @@ public:
         Timer timer_pushdata;
         timer_pushdata.Start();
 
-        // TODO Push.
+        // TODO Push. This has to be able to return the data multiple times, if consume is false.
         (void) consume;
 
         timer_pushdata.Stop();
@@ -190,10 +179,7 @@ private:
     size_t p_;
 
     using VectorSequenceAdapter = core::MultisequenceSelectorVectorSequenceAdapter<ValueType>;
-    using MultiVectorSelector = core::MultisequenceSelector<VectorSequenceAdapter, CompareFunction>;
-
     using FileSequenceAdapter = core::MultisequenceSelectorFileSequenceAdapter<ValueType>;
-    using MultiFileSelector = core::MultisequenceSelector<FileSequenceAdapter, CompareFunction>;
 
     using LocalRanks = std::vector<std::vector<size_t>>;
 
@@ -202,8 +188,6 @@ private:
 
     //! Sort function class
     SortAlgorithm sort_algorithm_;
-
-    MultiVectorSelector vector_selector_ {context_, compare_function_};
 
     //! \name PreOp Phase
     //! \{
@@ -278,7 +262,9 @@ private:
         std::vector<VectorSequenceAdapter> current_run_vector(1);
         current_run_vector[0] = current_run_;
         // TODO What to do when some PEs do not get the same amount of runs. (Dummy runs so every PE creates same amount of streams)
-        vector_selector_.GetEquallyDistantSplitterRanks(current_run_vector, local_ranks, splitter_count);
+        core::run_multisequence_selection<VectorSequenceAdapter, CompareFunction>
+                (context_, compare_function_, current_run_vector, &local_ranks,
+                        splitter_count);
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
@@ -324,12 +310,13 @@ private:
         auto run_count = run_files_.size();
         LOG << "Calculating " << splitter_count << " splitters.";
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
-        MultiFileSelector selector(context_, compare_function_);
         std::vector<FileSequenceAdapter> run_file_adapters(run_count);
         for (size_t i = 0; i < run_count; i++) {
             run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
         }
-        selector.GetEquallyDistantSplitterRanks(run_file_adapters, local_ranks, splitter_count);
+        core::run_multisequence_selection<FileSequenceAdapter, CompareFunction>
+                (context_, compare_function_, run_file_adapters, &local_ranks,
+                        splitter_count);
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements

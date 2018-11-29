@@ -122,7 +122,7 @@ public:
     {}
 
     void GetEquallyDistantSplitterRanks(SequenceAdapters sequences,
-                          std::vector<std::vector<size_t>>& out_local_ranks, size_t splitter_count)
+                          std::vector<std::vector<size_t>>* out_local_ranks, size_t splitter_count)
     {
         // *** Setup Environment for merging ***
 
@@ -231,12 +231,12 @@ public:
 
             // Get global ranks and shrink ranges.
             stats_.search_step_timer_.Start();
-            GetGlobalRanks(sequences, pivots, global_ranks, out_local_ranks, left, width);
+            GetGlobalRanks(sequences, pivots, global_ranks, *out_local_ranks, left, width);
 
             LOG << "global_ranks: " << global_ranks;
-            LOG << "local_ranks: " << out_local_ranks;
+            LOG << "local_ranks: " << *out_local_ranks;
 
-            SearchStep(global_ranks, out_local_ranks, target_ranks, left, width);
+            SearchStep(global_ranks, *out_local_ranks, target_ranks, left, width);
 
             if (debug) {
                 for (size_t q = 0; q < seq_count; q++) {
@@ -510,6 +510,15 @@ private:
         }
     }
 };
+
+template <typename SequenceAdapterType, typename Comparator>
+void run_multisequence_selection(Context& context, const Comparator& comparator,
+        std::vector<SequenceAdapterType> sequences, std::vector<std::vector<size_t>>* out_local_ranks,
+        size_t splitter_count) {
+    MultisequenceSelector<SequenceAdapterType, Comparator> selector(context, comparator);
+    return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks, splitter_count);
+
+}
 
 } // namespace core
 } // namespace thrill
