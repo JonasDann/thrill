@@ -238,81 +238,30 @@ private:
 
     //! \}
 
-    class VectorConsumeReaderAdapter {
-    public:
-        using ValueTypeVector = std::vector<ValueType>;
-        using ValueTypeVectorIterator = typename std::vector<ValueType>::iterator;
-
-        VectorConsumeReaderAdapter(ValueTypeVector& vector)
-        : vector_(vector),
-          current_(vector.begin())
-        {}
-
-        template <typename T>
-        ValueType Next() {
-            assert(HasNext());
-            return *(++current_);
-        }
-
-        bool HasNext() {
-            return std::next(current_) != vector_.end();
-        }
-
-        void Skip(size_t items, size_t bytes) {
-            (void) bytes;
-            current_ += items;
-        }
-
-        bool typecode_verify() {
-            return false;
-        }
-    private:
-        ValueTypeVector& vector_;
-        ValueTypeVectorIterator current_;
-    };
-
-    template <typename SequenceReaderType, bool skip_local>
-    void TransmitElements(std::vector<SequenceReaderType>& seq_readers, data::StreamData::Writers& data_writers, LocalRanks& local_ranks) {
+    void ScatterRun(std::vector<ValueType> run_seq,
+                    data::StreamData::Writers &data_writers,
+                    std::vector<size_t> &offsets) {
+        size_t run_size = run_seq.size();
         size_t my_rank = context_.my_rank();
-        size_t seq_count = seq_readers.size();
-        size_t splitter_count = local_ranks.size();
-        // TODO Refactor sequence stuff out of here. Elements need to be transmitted in order, which is not possible like that.
-        for (size_t seq_index = 0; seq_index < seq_count; seq_index++) {
-            LOG << "Transmitting element of sequence " << seq_index << ".";
-            auto seq_reader = &seq_readers[seq_index];
-            // TODO initialize this with my rank / neighbor to the right
-            size_t worker_rank = 0;
-            size_t i = 0;
-            LOG << "Worker rank " << worker_rank << ".";
-            while (seq_reader->HasNext()) {
-                while (worker_rank < splitter_count && local_ranks[worker_rank][seq_index] <= i) {
-                    worker_rank++;
-                    // TODO Close writer for past worker
-                    LOG << "Worker rank " << worker_rank << ".";
-                }
-
-                if (skip_local && worker_rank == my_rank) {
-                    // if last worker
-                    if (my_rank == splitter_count) {
-                        LOG << "Go to next sequence.";
-                        break;
-                    } else {
-                        const size_t items = local_ranks[worker_rank][seq_index] - i;
-                        LOG << "Skip " << items <<" elements.";
-                        const size_t bytes_per_item =
-                                (seq_reader->typecode_verify() ? sizeof(size_t) : 0)
-                                + data::Serialization<data::File::ConsumeReader, ValueType>::fixed_size;
-                        seq_reader->Skip(items, items * bytes_per_item);
-                        i += items;
-                    }
-                } else {
-                    auto next = seq_reader->template Next<ValueType>();
-                    data_writers[worker_rank].template Put<ValueType>(next);
-                    LOG << next;
-                    i++;
-                }
+        size_t worker_count = offsets.size();
+        size_t worker_rank = (my_rank + 1) % worker_count;
+        size_t i = offsets[my_rank] % run_size;
+        LOG << "Worker rank " << worker_rank << ".";
+        while (worker_rank != my_rank || offsets[worker_rank] > i) {
+            if (worker_rank != my_rank && offsets[worker_rank] <= i) {
+                data_writers[worker_rank].Close();
+                if (worker_rank + 1 >= worker_count) // last worker
+                    i %= run_size;
+                worker_rank = (worker_rank + 1) % worker_count;
+                LOG << "Worker rank " << worker_rank << ".";
+            } else {
+                auto next = run_seq[i];
+                data_writers[worker_rank].template Put<ValueType>(next);
+                LOG << next;
+                i++;
             }
         }
+        data_writers[my_rank].Close();
     }
 
     void FinishCurrentRun() {
@@ -336,14 +285,17 @@ private:
         // Redistribute Elements
         auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
         auto data_writers = data_stream->GetWriters();
-        std::vector<VectorConsumeReaderAdapter> current_run_reader(1, VectorConsumeReaderAdapter(current_run_));
 
-        LOG << "Transmitting elements.";
-        TransmitElements<VectorConsumeReaderAdapter, false>(current_run_reader, data_writers, local_ranks);
+        // Construct offsets vector
+        std::vector<size_t> offsets(splitter_count + 1);
+        std::transform(local_ranks.begin(), local_ranks.end(), offsets.begin(), [](std::vector<size_t> element) {
+            return element[0];
+        });
+        offsets[splitter_count] = current_run_.size();
+
+        LOG << "Scatter current run.";
+        ScatterRun(current_run_, data_writers, offsets);
         current_run_.clear();
-        for (size_t worker_rank = 0; worker_rank < p_; worker_rank++) {
-            data_writers[worker_rank].Close();
-        }
 
         auto data_readers = data_stream->GetReaders();
         LOG << "Building merge tree.";
@@ -382,18 +334,21 @@ private:
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
-        // TODO Do redistribute step as loop over run files
+        LOG << "Scatter run files.";
         auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
-        auto data_writers = data_stream->GetWriters();
-        std::vector<data::File::ConsumeReader> run_readers;
-        for (size_t i = 0; i < run_count; i++) {
-            run_readers.emplace_back(run_files_[i]->GetConsumeReader());
-        }
+        for (size_t run_index = 0; run_index < run_count; run_index++) {
+            // Construct offsets vector
+            std::vector<size_t> run_offsets(splitter_count + 2);
+            run_offsets[0] = 0;
+            std::transform(local_ranks.begin(), local_ranks.end(), run_offsets.begin(), [run_index](std::vector<size_t> element) {
+                return element[run_index];
+            });
+            run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
 
-        LOG << "Transmitting elements.";
-        TransmitElements<data::File::ConsumeReader, true>(run_readers, data_writers, local_ranks);
-        for (size_t worker_rank = 0; worker_rank < p_; worker_rank++) {
-            data_writers[worker_rank].Close();
+            data_stream->template Scatter<ValueType>(*run_files_[run_index],
+                    run_offsets, true);
+
+            // TODO Pull readers into loop.
         }
 
         auto data_readers = data_stream->GetReaders();
