@@ -280,12 +280,14 @@ private:
         for (size_t seq_index = 0; seq_index < seq_count; seq_index++) {
             LOG << "Transmitting element of sequence " << seq_index << ".";
             auto seq_reader = &seq_readers[seq_index];
+            // TODO initialize this with my rank / neighbor to the right
             size_t worker_rank = 0;
             size_t i = 0;
             LOG << "Worker rank " << worker_rank << ".";
             while (seq_reader->HasNext()) {
                 while (worker_rank < splitter_count && local_ranks[worker_rank][seq_index] <= i) {
                     worker_rank++;
+                    // TODO Close writer for past worker
                     LOG << "Worker rank " << worker_rank << ".";
                 }
 
@@ -327,6 +329,7 @@ private:
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(1));
         std::vector<VectorSequenceAdapter> current_run_vector(1);
         current_run_vector[0] = current_run_;
+        // TODO What to do when some PEs do not get the same amount of runs. (Dummy runs so every PE creates same amount of streams)
         vector_selector_.GetEquallyDistantSplitterRanks(current_run_vector, local_ranks, splitter_count);
         LOG << "Local splitters: " << local_ranks;
 
@@ -397,6 +400,7 @@ private:
         auto correction_file = context_.GetFilePtr(this);
         auto correction_file_writer = correction_file->GetWriter();
 
+        // TODO this is already in order and only needs to be concatenated to a file (GetCatFile in CatStream)
         LOG << "Building correction step merge tree.";
         auto correction_merge_tree = core::make_multiway_merge_tree<ValueType>(
                 data_readers.begin(), data_readers.end(), compare_function_);

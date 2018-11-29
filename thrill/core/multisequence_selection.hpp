@@ -26,6 +26,8 @@
 namespace thrill {
 namespace core {
 
+// TODO Unit Test
+// TODO run_multisequence_selection as method that created selector and runs selection
 template <typename ValueType_>
 class MultisequenceSelectorFileSequenceAdapter
 {
