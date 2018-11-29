@@ -24,9 +24,10 @@
 #include <thrill/core/multisequence_selection.hpp>
 #include <thrill/core/multiway_merge.hpp>
 #include <thrill/data/file.hpp>
+#include <thrill/data/block_reader.hpp>
 #include <thrill/net/group.hpp>
-#include <tlx/math/integer_log2.hpp>
 
+#include <tlx/math/integer_log2.hpp>
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
@@ -36,7 +37,6 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
-#include "../data/block_reader.hpp"
 
 namespace thrill {
 namespace api {
@@ -219,9 +219,8 @@ private:
 
     //! \name MainOp and PushData
     //! \{
-
-
-
+    //! Runs that are split up perfectly, just need to be merged
+    std::vector<data::FilePtr> final_run_files_;
     //! \}
 
     //! \name Statistics
@@ -334,50 +333,42 @@ private:
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
-        LOG << "Scatter run files.";
-        auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
+        LOG << "Scatter " << run_count << " run files.";
+
         for (size_t run_index = 0; run_index < run_count; run_index++) {
+            auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
+
             // Construct offsets vector
             std::vector<size_t> run_offsets(splitter_count + 2);
             run_offsets[0] = 0;
-            std::transform(local_ranks.begin(), local_ranks.end(), run_offsets.begin(), [run_index](std::vector<size_t> element) {
+            std::transform(local_ranks.begin(), local_ranks.end(), run_offsets.begin() + 1, [run_index](std::vector<size_t> element) {
                 return element[run_index];
             });
             run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
+            LOG << "Offsets: " << run_offsets;
 
             data_stream->template Scatter<ValueType>(*run_files_[run_index],
                     run_offsets, true);
 
-            // TODO Pull readers into loop.
+            auto final_run_file = context_.GetFilePtr(this);
+            final_run_files_.emplace_back(final_run_file);
+            data_stream->GetFile(final_run_file, true);
+
+            auto reader = final_run_file->GetKeepReader();
+            while (reader.HasNext()) {
+                LOG << reader.template Next<ValueType>();
+            }
+
+            data_stream.reset();
         }
-
-        auto data_readers = data_stream->GetReaders();
-        auto correction_file = context_.GetFilePtr(this);
-        auto correction_file_writer = correction_file->GetWriter();
-
-        // TODO this is already in order and only needs to be concatenated to a file (GetCatFile in CatStream)
-        LOG << "Building correction step merge tree.";
-        auto correction_merge_tree = core::make_multiway_merge_tree<ValueType>(
-                data_readers.begin(), data_readers.end(), compare_function_);
-
-        LOG << "Merging to correction file.";
-        while (correction_merge_tree.HasNext()) {
-            auto next = correction_merge_tree.Next();
-            correction_file_writer.template Put<ValueType>(next);
-            LOG << next;
-        }
-        correction_file_writer.Close();
         /* } Phase 2 */
 
         /* Phase 3 { */
         LOG << "Phase 3.";
         std::vector<data::File::ConsumeReader> file_readers;
-        LOG << "Correction file has size " << correction_file->num_items();
-        file_readers.emplace_back(correction_file->GetConsumeReader());
         for (size_t i = 0; i < run_count; i++) {
-            LOG << "Run file " << i << " has size " << run_files_[i]->num_items();
-            file_readers.emplace_back(run_files_[i]->GetConsumeReader());
-            // TODO Consume reader consumes unconditionally all the elements. Cannot be used? But what to use instead?
+            LOG << "Run file " << i << " has size " << final_run_files_[i]->num_items();
+            file_readers.emplace_back(final_run_files_[i]->GetConsumeReader());
         }
 
         LOG << "Building merge tree.";
@@ -390,8 +381,6 @@ private:
             LOG << next;
         }
         LOG << "Finished merging.";
-
-        data_stream.reset();
         /* } Phase 3 */
     }
 };
