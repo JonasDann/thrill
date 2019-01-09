@@ -194,6 +194,8 @@ private:
 
     using FileSequenceAdapter = core::MultisequenceSelectorFileSequenceAdapter<ValueType>;
 
+    using LocalRanks = std::vector<std::vector<size_t>>;
+
     //! Whether the parent stack is empty
     const std::array<bool, kNumInputs> parent_stack_empty_;
 
@@ -205,8 +207,6 @@ private:
 
     //! Array of inbound CatStreams
     data::CatStreamPtr streams_[kNumInputs];
-
-    using ArrayNumInputsSizeT = std::array<size_t, kNumInputs>;
 
     using StatsTimer = common::StatsTimerBaseStopped<stats_enabled>;
 
@@ -262,14 +262,14 @@ private:
         size_t p = context_.num_workers();
         LOG << "splitting to " << p << " workers";
 
-        std::vector<ArrayNumInputsSizeT> local_ranks(p - 1);
+        LocalRanks local_ranks(p - 1, std::vector<size_t>(kNumInputs));
 
-        FileSequenceAdapter sequences[kNumInputs];
+        std::vector<FileSequenceAdapter> sequences(kNumInputs);
         for (size_t i = 0; i < kNumInputs; i++)
             sequences[i] = FileSequenceAdapter(files_[i]);
 
-        core::MultisequenceSelector<FileSequenceAdapter, Comparator, kNumInputs> selector(context_, comparator_);
-        selector.GetEquallyDistantSplitterRanks(sequences, local_ranks, p - 1);
+        core::run_multisequence_selection<FileSequenceAdapter, Comparator>
+                (context_, comparator_, sequences, &local_ranks, p - 1);
 
         LOG << "Creating channels";
 
