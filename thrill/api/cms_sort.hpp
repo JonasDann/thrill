@@ -268,7 +268,7 @@ private:
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
-        auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
+        auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
         auto data_writers = data_stream->GetWriters();
 
         // Construct offsets vector
@@ -323,7 +323,7 @@ private:
         LOG << "Scatter " << run_count << " run files.";
 
         for (size_t run_index = 0; run_index < run_count; run_index++) {
-            auto data_stream = context_.template GetNewStream<data::CatStream>(this->id());
+            auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
 
             // Construct offsets vector
             std::vector<size_t> run_offsets(splitter_count + 2);
