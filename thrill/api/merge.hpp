@@ -151,8 +151,8 @@ public:
         return true;
     }
 
-    void StopPreOp(size_t id) final {
-        writers_[id].Close();
+    void StopPreOp(size_t parent_index) final {
+        writers_[parent_index].Close();
     }
 
     void Execute() final {

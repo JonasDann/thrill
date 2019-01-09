@@ -326,16 +326,42 @@ void RunLocalTests(
     // discard json log
     tlx::setenv("THRILL_LOG", "", /* overwrite */ 1);
 
-    // set fixed amount of RAM for testing
+    // set fixed amount of RAM for testing, disable /proc profiler
     MemoryConfig mem_config;
     mem_config.verbose_ = false;
+    mem_config.enable_proc_profiler_ = false;
     mem_config.setup(ram);
 
     static constexpr size_t num_hosts_list[] = { 1, 2, 5, 8 };
     static constexpr size_t num_workers_list[] = { 1, 3 };
 
+    size_t max_mock_workers = 1000000;
+
+    const char* env_max_mock_workers = getenv("THRILL_MAX_MOCK_WORKERS");
+    if (env_max_mock_workers && *env_max_mock_workers) {
+        // parse envvar only if it exists.
+        char* endptr;
+        max_mock_workers = std::strtoul(env_max_mock_workers, &endptr, 10);
+
+        if (!endptr || *endptr != 0 || max_mock_workers == 0) {
+            std::cerr << "Thrill: environment variable"
+                      << " THRILL_MAX_MOCK_WORKERS=" << env_max_mock_workers
+                      << " is not a valid maximum number of mock hosts."
+                      << std::endl;
+            return;
+        }
+    }
+
     for (const size_t& num_hosts : num_hosts_list) {
         for (const size_t& workers_per_host : num_workers_list) {
+            if (num_hosts * workers_per_host > max_mock_workers) {
+                std::cerr << "Thrill: skipping test with "
+                          << num_hosts * workers_per_host
+                          << " workers > max workers " << max_mock_workers
+                          << std::endl;
+                continue;
+            }
+
             RunLocalMock(mem_config, num_hosts, workers_per_host,
                          job_startpoint);
         }
@@ -1050,7 +1076,8 @@ HostContext::HostContext(
     // write command line parameters to json log
     common::LogCmdlineParams(logger_);
 
-    StartLinuxProcStatsProfiler(*profiler_, logger_);
+    if (mem_config_.enable_proc_profiler_)
+        StartLinuxProcStatsProfiler(*profiler_, logger_);
 
     // run memory profiler only on local host 0 (especially for test runs)
     if (local_host_id == 0)
@@ -1105,7 +1132,7 @@ Context::Context(HostContext& host_context, size_t local_worker_id)
 }
 
 data::File Context::GetFile(DIABase* dia) {
-    return GetFile(dia != nullptr ? dia->id() : 0);
+    return GetFile(dia != nullptr ? dia->dia_id() : 0);
 }
 
 data::FilePtr Context::GetFilePtr(size_t dia_id) {
@@ -1114,7 +1141,7 @@ data::FilePtr Context::GetFilePtr(size_t dia_id) {
 }
 
 data::FilePtr Context::GetFilePtr(DIABase* dia) {
-    return GetFilePtr(dia != nullptr ? dia->id() : 0);
+    return GetFilePtr(dia != nullptr ? dia->dia_id() : 0);
 }
 
 data::CatStreamPtr Context::GetNewCatStream(size_t dia_id) {
@@ -1122,7 +1149,7 @@ data::CatStreamPtr Context::GetNewCatStream(size_t dia_id) {
 }
 
 data::CatStreamPtr Context::GetNewCatStream(DIABase* dia) {
-    return GetNewCatStream(dia != nullptr ? dia->id() : 0);
+    return GetNewCatStream(dia != nullptr ? dia->dia_id() : 0);
 }
 
 data::MixStreamPtr Context::GetNewMixStream(size_t dia_id) {
@@ -1130,7 +1157,7 @@ data::MixStreamPtr Context::GetNewMixStream(size_t dia_id) {
 }
 
 data::MixStreamPtr Context::GetNewMixStream(DIABase* dia) {
-    return GetNewMixStream(dia != nullptr ? dia->id() : 0);
+    return GetNewMixStream(dia != nullptr ? dia->dia_id() : 0);
 }
 
 template <>
