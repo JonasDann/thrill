@@ -8,6 +8,7 @@
 # All rights reserved. Published under the BSD-2 license in the LICENSE file.
 ################################################################################
 
+thrill_build_prog(canonical_merge_sort)
 thrill_build_prog(generate_write_binary)
 thrill_build_prog(generate_numbers)
 thrill_build_prog(groupby)

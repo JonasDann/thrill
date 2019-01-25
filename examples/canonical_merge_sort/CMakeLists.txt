@@ -8,6 +8,6 @@
 # All rights reserved. Published under the BSD-2 license in the LICENSE file.
 ################################################################################
 
-thrill_build_prog(cms_sort)
+thrill_build_prog(cm_sort)
 
 ################################################################################

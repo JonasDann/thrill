@@ -11,7 +11,7 @@
 #include <thrill/api/generate.hpp>
 #include <thrill/api/read_binary.hpp>
 #include <thrill/api/size.hpp>
-#include <thrill/api/cms_sort.hpp>
+#include <thrill/api/cm_sort.hpp>
 #include <thrill/api/write_binary.hpp>
 #include <thrill/common/logger.hpp>
 #include <thrill/common/string.hpp>

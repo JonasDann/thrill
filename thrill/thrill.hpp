@@ -21,7 +21,7 @@ print "#include <$_>\n" foreach sort glob("thrill/api/"."*.hpp");
 #include <thrill/api/all_reduce.hpp>
 #include <thrill/api/bernoulli_sample.hpp>
 #include <thrill/api/cache.hpp>
-#include <thrill/api/cms_sort.hpp>
+#include <thrill/api/cm_sort.hpp>
 #include <thrill/api/collapse.hpp>
 #include <thrill/api/concat.hpp>
 #include <thrill/api/concat_to_dia.hpp>

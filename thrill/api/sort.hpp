@@ -64,7 +64,7 @@ class SortNode final : public DOpNode<ValueType>
     static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of stats
-    static constexpr bool stats_enabled = false;
+    static constexpr bool stats_enabled = true;
 
     using Super = DOpNode<ValueType>;
     using Super::context_;

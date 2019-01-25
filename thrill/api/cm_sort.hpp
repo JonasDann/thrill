@@ -75,7 +75,7 @@ class CanonicalMergeSortNode final : public DOpNode<ValueType>
     //! RIAA class for running the timer
     using RunTimer = common::RunTimer<Timer>;
 
-    static const size_t run_capacity_ = 15;
+    size_t run_capacity_ = 15;
 
 public:
     /*!
@@ -99,6 +99,8 @@ public:
 
         // Count of all workers (and count of target partitions)
         p_ = context_.num_workers();
+        run_capacity_ = context_.mem_limit() / 2;
+        LOG << "Run capacity: " << run_capacity_;
     }
 
     void StartPreOp(size_t /* id */) final {
@@ -130,9 +132,20 @@ public:
         timer_preop_.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                "Sort() timer_preop_", timer_preop_.SecondsDouble());
+                    "CanonicalMergeSort() preop local_items_", local_items_);
             context_.PrintCollectiveMeanStdev(
-                "Sort() preop local_items_", local_items_);
+                "CanonicalMergeSort() timer_preop_", timer_preop_.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                "CanonicalMergeSort() timer_sort_", timer_sort_.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                    "CanonicalMergeSort() timer_selection_", timer_selection_.SecondsDouble());
+            timer_selection_.Reset();
+            context_.PrintCollectiveMeanStdev(
+                    "CanonicalMergeSort() timer_scatter_", timer_scatter_.SecondsDouble());
+            timer_scatter_.Reset();
+            context_.PrintCollectiveMeanStdev(
+                    "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
+            timer_merge_.Reset();
         }
     }
 
@@ -142,10 +155,16 @@ public:
 
     //! Executes the sort operation.
     void Execute() final {
+        Timer timer_mainop;
+        timer_mainop.Start();
         MainOp();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                "Sort() timer_execute", timer_execute_.SecondsDouble());
+                "CanonicalMergeSort() timer_mainop", timer_mainop.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                "CanonicalMergeSort() timer_selection_", timer_selection_.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                "CanonicalMergeSort() timer_scatter_", timer_scatter_.SecondsDouble());
         }
     }
 
@@ -155,20 +174,61 @@ public:
     }
 
     void PushData(bool consume) final {
+        /* Phase 3 { */
+        LOG << "Phase 3.";
+
         Timer timer_pushdata;
         timer_pushdata.Start();
 
-        // TODO Push. This has to be able to return the data multiple times, if consume is false.
-        (void) consume;
+        size_t local_size = 0;
+        if (final_run_files_.size() == 0) {
+            // nothing to push
+        }
+        else if (final_run_files_.size() == 1) {
+            local_size = final_run_files_[0]->num_items();
+            this->PushFile(*(final_run_files_[0]), consume);
+        }
+        else {
+            size_t merge_degree, prefetch;
+            std::tie(merge_degree, prefetch) =
+                    context_.block_pool().MaxMergeDegreePrefetch(final_run_files_.size());
+
+            std::vector<data::File::Reader> file_readers;
+            for (size_t i = 0; i < final_run_files_.size(); i++) {
+                LOG << "Run file " << i << " has size " << final_run_files_[i]->num_items();
+                file_readers.emplace_back(final_run_files_[i]->GetReader(consume, /* prefetch */ 0));
+            }
+
+            StartPrefetch(file_readers, prefetch);
+
+            LOG << "Building merge tree.";
+            auto file_merge_tree = core::make_multiway_merge_tree<ValueType>(
+                    file_readers.begin(), file_readers.end(), compare_function_);
+
+
+            LOG << "Merging " << final_run_files_.size() << " files with prefetch" << prefetch << ".";
+            timer_merge_.Start();
+            while (file_merge_tree.HasNext()) {
+                auto next = file_merge_tree.Next();
+                this->PushItem(next);
+                local_size++;
+            }
+            timer_merge_.Stop();
+            LOG << "Finished merging.";
+        }
 
         timer_pushdata.Stop();
 
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                "Sort() timer_pushdata", timer_pushdata.SecondsDouble());
-
-            //context_.PrintCollectiveMeanStdev("Sort() local_size", local_size);
+                    "CanonicalMergeSort() local_size", local_size);
+            context_.PrintCollectiveMeanStdev(
+                "CanonicalMergeSort() timer_pushdata", timer_pushdata.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
         }
+
+        /* } Phase 3 */
     }
 
     void Dispose() final {
@@ -213,11 +273,17 @@ private:
     //! time spent in PreOp (including preceding Node's computation)
     Timer timer_preop_;
 
-    //! time spent in Execute
-    Timer timer_execute_;
-
     //! time spent in sort()
     Timer timer_sort_;
+
+    //! time spent in multisequence selection
+    Timer timer_selection_;
+
+    //! time spent in communication
+    Timer timer_scatter_;
+
+    //! time spent in merging lists
+    Timer timer_merge_;
 
     //! \}
 
@@ -240,7 +306,6 @@ private:
             } else {
                 auto next = run_seq[i];
                 data_writers[worker_rank].template Put<ValueType>(next);
-                LOG << next;
                 i++;
             }
         }
@@ -250,6 +315,7 @@ private:
     void FinishCurrentRun() {
         /* Phase 1 {*/
         // Sort Locally
+        LOG << "Phase 1.";
         LOG << "Sort run locally.";
         timer_sort_.Start();
         sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
@@ -262,9 +328,11 @@ private:
         std::vector<VectorSequenceAdapter> current_run_vector(1);
         current_run_vector[0] = current_run_;
         // TODO What to do when some PEs do not get the same amount of runs. (Dummy runs so every PE creates same amount of streams)
+        timer_selection_.Start();
         core::run_multisequence_selection<VectorSequenceAdapter, CompareFunction>
                 (context_, compare_function_, current_run_vector, &local_ranks,
                         splitter_count);
+        timer_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
@@ -279,9 +347,12 @@ private:
         offsets[splitter_count] = current_run_.size();
 
         LOG << "Scatter current run.";
+        timer_scatter_.Start();
         ScatterRun(current_run_, data_writers, offsets);
+        timer_scatter_.Stop();
         current_run_.clear();
 
+        // TODO Prefetch?
         auto data_readers = data_stream->GetReaders();
         LOG << "Building merge tree.";
         auto multiway_merge_tree = core::make_multiway_merge_tree<ValueType>(
@@ -290,11 +361,12 @@ private:
         LOG << "Merging into run file.";
         run_files_.emplace_back(context_.GetFilePtr(this));
         auto current_run_file_writer = run_files_.back()->GetWriter();
+        timer_merge_.Start();
         while (multiway_merge_tree.HasNext()) {
             auto next = multiway_merge_tree.Next();
             current_run_file_writer.template Put<ValueType>(next);
-            LOG << next;
         }
+        timer_merge_.Stop();
         current_run_file_writer.Close();
         LOG << "Finished run has " << run_files_.back()->num_items() << " elements.";
 
@@ -314,9 +386,11 @@ private:
         for (size_t i = 0; i < run_count; i++) {
             run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
         }
+        timer_selection_.Start();
         core::run_multisequence_selection<FileSequenceAdapter, CompareFunction>
                 (context_, compare_function_, run_file_adapters, &local_ranks,
                         splitter_count);
+        timer_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
@@ -334,41 +408,18 @@ private:
             run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
             LOG << "Offsets: " << run_offsets;
 
+            timer_scatter_.Start();
             data_stream->template Scatter<ValueType>(*run_files_[run_index],
                     run_offsets, true);
+            timer_scatter_.Stop();
 
             auto final_run_file = context_.GetFilePtr(this);
             final_run_files_.emplace_back(final_run_file);
             data_stream->GetFile(final_run_file, true);
 
-            auto reader = final_run_file->GetKeepReader();
-            while (reader.HasNext()) {
-                LOG << reader.template Next<ValueType>();
-            }
-
             data_stream.reset();
         }
         /* } Phase 2 */
-
-        /* Phase 3 { */
-        LOG << "Phase 3.";
-        std::vector<data::File::ConsumeReader> file_readers;
-        for (size_t i = 0; i < run_count; i++) {
-            LOG << "Run file " << i << " has size " << final_run_files_[i]->num_items();
-            file_readers.emplace_back(final_run_files_[i]->GetConsumeReader());
-        }
-
-        LOG << "Building merge tree.";
-        auto file_merge_tree = core::make_multiway_merge_tree<ValueType>(
-                file_readers.begin(), file_readers.end(), compare_function_);
-
-        LOG << "Merging.";
-        while (file_merge_tree.HasNext()) {
-            auto next = file_merge_tree.Next();
-            LOG << next;
-        }
-        LOG << "Finished merging.";
-        /* } Phase 3 */
     }
 };
 
