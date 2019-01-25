@@ -435,22 +435,22 @@ private:
 
         // Simply get the rank of each pivot in each file. Sum the ranks up
         // locally.
-        for (size_t s = 0; s < pivots.size(); s++) {
+        for (size_t p = 0; p < pivots.size(); p++) {
             size_t rank = 0;
-            for (size_t i = 0; i < sequences.size(); i++) {
+            for (size_t s = 0; s < sequences.size(); s++) {
                 stats_.file_op_timer_.Start();
 
-                size_t idx = sequences[i].template GetIndexOf<Comparator>(
-                        pivots[s].value, pivots[s].tie_idx,
-                        left[s][i], left[s][i] + width[s][i],
+                size_t idx = sequences[s].template GetIndexOf<Comparator>(
+                        pivots[p].value, pivots[p].tie_idx,
+                        left[p][s], left[p][s] + width[p][s],
                         comparator_);
 
                 stats_.file_op_timer_.Stop();
 
                 rank += idx;
-                out_local_ranks[s][i] = idx;
+                out_local_ranks[p][s] = idx;
             }
-            global_ranks[s] = rank;
+            global_ranks[p] = rank;
         }
 
         stats_.comm_timer_.Start();
