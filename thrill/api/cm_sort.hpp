@@ -352,7 +352,6 @@ private:
         timer_scatter_.Stop();
         current_run_.clear();
 
-        // TODO Prefetch?
         auto data_readers = data_stream->GetReaders();
         LOG << "Building merge tree.";
         auto multiway_merge_tree = core::make_multiway_merge_tree<ValueType>(

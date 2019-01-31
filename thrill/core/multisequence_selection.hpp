@@ -94,8 +94,7 @@ public:
                 (!less(item, currentItem) && !less(currentItem, item) &&
                   tie <= mid)) {
                 right = mid;
-            }
-            else {
+            } else {
                 left = mid + 1;
             }
         }
@@ -236,7 +235,7 @@ public:
             LOG << "global_ranks: " << global_ranks;
             LOG << "local_ranks: " << *out_local_ranks;
 
-            SearchStep(global_ranks, *out_local_ranks, target_ranks, left, width);
+            SearchStep(sequences, pivots, global_ranks, *out_local_ranks, target_ranks, left, width);
 
             if (debug) {
                 for (size_t q = 0; q < seq_count; q++) {
@@ -249,11 +248,11 @@ public:
                 }
             }
 
-            // We check for accuracy of sequences.size() + 5
+            // We check for accuracy of 1
             finished = true;
             for (size_t i = 0; i < splitter_count; i++) {
                 size_t a = global_ranks[i], b = target_ranks[i];
-                if (tlx::abs_diff(a, b) > sequences.size() + 5) {
+                if (tlx::abs_diff(a, b) > 1) {
                     finished = false;
                     break;
                 }
@@ -397,8 +396,8 @@ private:
             size_t pivot_idx = left[s][mp];
 
             if (width[s][mp] > 0) {
-                pivot_idx = left[s][mp] + (context_.rng_() % width[s][mp]);
-                assert(pivot_idx < sequences[mp].size());
+                pivot_idx = left[s][mp] + (width[s][mp] / 2);
+                assert(pivot_idx < sequences[mp].size()); // TODO why does this assertion fail?
                 stats_.file_op_timer_.Start();
                 pivot_elem = sequences[mp][pivot_idx];
                 stats_.file_op_timer_.Stop();
@@ -479,6 +478,8 @@ private:
      * This parameter will be modified.
      */
     void SearchStep(
+            SequenceAdapters sequences,
+            const std::vector<Pivot>& pivots,
             const std::vector<size_t>& global_ranks,
             const std::vector<std::vector<size_t>>& local_ranks,
             const std::vector<size_t>& target_ranks,
@@ -496,12 +497,20 @@ private:
                 assert(left[s][p] <= local_rank);
 
                 if (global_ranks[s] < target_ranks[s]) {
+                    if (local_rank < sequences[p].size() && sequences[p][local_rank] == pivots[s].value) {
+                        local_rank++;
+                    }
                     width[s][p] -= local_rank - left[s][p];
                     left[s][p] = local_rank;
                 }
-                else if (global_ranks[s] >= target_ranks[s]) {
+                else if (global_ranks[s] > target_ranks[s]) {
                     width[s][p] = local_rank - left[s][p];
+                } else {
+                    left[s][p] = local_rank;
+                    width[s][p] = 0;
                 }
+                assert(0 <= left[s][p] && left[s][p] <= sequences[p].size());
+                assert(width[s][p] >= 0);
 
                 if (debug) {
                     die_unless(width[s][p] <= old_width);
