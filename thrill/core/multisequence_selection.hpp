@@ -109,7 +109,7 @@ class MultisequenceSelector
     using ValueType = typename SequenceAdapterType::ValueType;
     using SequenceAdapters = typename std::vector<SequenceAdapterType>;
 
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
     static constexpr bool self_verify = debug && common::g_debug_mode;
 
     //! Set this variable to true to enable generation and output of merge stats
@@ -235,7 +235,7 @@ public:
             LOG << "global_ranks: " << global_ranks;
             LOG << "local_ranks: " << *out_local_ranks;
 
-            SearchStep(sequences, pivots, global_ranks, *out_local_ranks, target_ranks, left, width);
+            SearchStep(pivots, global_ranks, *out_local_ranks, target_ranks, left, width);
 
             if (debug) {
                 for (size_t q = 0; q < seq_count; q++) {
@@ -252,7 +252,7 @@ public:
             finished = true;
             for (size_t i = 0; i < splitter_count; i++) {
                 size_t a = global_ranks[i], b = target_ranks[i];
-                if (tlx::abs_diff(a, b) > 1) {
+                if (tlx::abs_diff(a, b) > seq_count) {
                     finished = false;
                     break;
                 }
@@ -275,6 +275,7 @@ private:
         ValueType value;
         size_t    tie_idx;
         size_t    segment_len;
+        size_t    worker_rank;
     };
 
     //! Logging helper to print vectors of vectors of pivots.
@@ -397,7 +398,7 @@ private:
 
             if (width[s][mp] > 0) {
                 pivot_idx = left[s][mp] + (width[s][mp] / 2);
-                assert(pivot_idx < sequences[mp].size()); // TODO why does this assertion fail?
+                assert(pivot_idx < sequences[mp].size());
                 stats_.file_op_timer_.Start();
                 pivot_elem = sequences[mp][pivot_idx];
                 stats_.file_op_timer_.Stop();
@@ -406,7 +407,8 @@ private:
             out_pivots[s] = Pivot {
                     pivot_elem,
                     pivot_idx,
-                    width[s][mp]
+                    width[s][mp],
+                    context_.my_rank()
             };
         }
 
@@ -478,7 +480,6 @@ private:
      * This parameter will be modified.
      */
     void SearchStep(
-            SequenceAdapters sequences,
             const std::vector<Pivot>& pivots,
             const std::vector<size_t>& global_ranks,
             const std::vector<std::vector<size_t>>& local_ranks,
@@ -497,7 +498,8 @@ private:
                 assert(left[s][p] <= local_rank);
 
                 if (global_ranks[s] < target_ranks[s]) {
-                    if (local_rank < sequences[p].size() && sequences[p][local_rank] == pivots[s].value) {
+                    if (pivots[s].worker_rank == context_.my_rank()) {
+                        LOG << "[" << stats_.iterations_ << "] increment (split: " << s << " seq: " << p << " pivot: " << pivots[s].value << ").";
                         local_rank++;
                     }
                     width[s][p] -= local_rank - left[s][p];
@@ -509,7 +511,6 @@ private:
                     left[s][p] = local_rank;
                     width[s][p] = 0;
                 }
-                assert(0 <= left[s][p] && left[s][p] <= sequences[p].size());
                 assert(width[s][p] >= 0);
 
                 if (debug) {
