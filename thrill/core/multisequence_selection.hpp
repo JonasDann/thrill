@@ -27,7 +27,6 @@ namespace thrill {
 namespace core {
 
 // TODO Unit Test
-// TODO run_multisequence_selection as method that created selector and runs selection
 template <typename ValueType_>
 class MultisequenceSelectorFileSequenceAdapter
 {
@@ -252,7 +251,7 @@ public:
             finished = true;
             for (size_t i = 0; i < splitter_count; i++) {
                 size_t a = global_ranks[i], b = target_ranks[i];
-                if (tlx::abs_diff(a, b) > seq_count) {
+                if (tlx::abs_diff(a, b) > seq_count) { // TODO can this be "> 0"?
                     finished = false;
                     break;
                 }
@@ -264,6 +263,7 @@ public:
         stats_.balancing_timer_.Stop();
 
         LOG << "Finished after " << stats_.iterations_ << " iterations";
+        stats_.Print(context_);
     }
 
 private:
@@ -497,15 +497,15 @@ private:
                 size_t old_width = width[s][p];
                 assert(left[s][p] <= local_rank);
 
-                if (global_ranks[s] < target_ranks[s]) {
+                if (target_ranks[s] > global_ranks[s]) {
                     if (pivots[s].worker_rank == context_.my_rank()) {
                         LOG << "[" << stats_.iterations_ << "] increment (split: " << s << " seq: " << p << " pivot: " << pivots[s].value << ").";
-                        local_rank++;
+                        local_rank++; // +1 binary search only on worker that pivot is from
                     }
                     width[s][p] -= local_rank - left[s][p];
                     left[s][p] = local_rank;
                 }
-                else if (global_ranks[s] > target_ranks[s]) {
+                else if (target_ranks[s] < global_ranks[s]) {
                     width[s][p] = local_rank - left[s][p];
                 } else {
                     left[s][p] = local_rank;

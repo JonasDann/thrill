@@ -128,6 +128,7 @@ public:
         if (current_run_.size() > 0) {
             FinishCurrentRun();
         }
+        std::vector<ValueType>().swap(current_run_); // free vector
 
         timer_preop_.Stop();
         if (stats_enabled) {
@@ -169,7 +170,8 @@ public:
     }
 
     DIAMemUse PushDataMemUse() final {
-        // TODO What does this do? Make it work.
+        // Communicates how much memory the DIA needs on push data
+        // TODO Make it work.
         return 0;
     }
 
