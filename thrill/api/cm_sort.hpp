@@ -105,14 +105,15 @@ public:
 
     void StartPreOp(size_t /* id */) final {
         timer_preop_.Start();
-        current_run_.reserve(run_capacity_);
+        current_run_.emplace_back(VectorSequenceAdapter());
+        current_run_[0].reserve(run_capacity_);
     }
 
     void PreOp(const ValueType& input) {
-        if (current_run_.size() >= run_capacity_) {
+        if (current_run_[0].size() >= run_capacity_) {
             FinishCurrentRun();
         }
-        current_run_.push_back(input);
+        current_run_[0].push_back(input);
         local_items_++;
     }
 
@@ -125,10 +126,10 @@ public:
     }
 
     void StopPreOp(size_t /* id */) final {
-        if (current_run_.size() > 0) {
+        if (current_run_[0].size() > 0) {
             FinishCurrentRun();
         }
-        std::vector<ValueType>().swap(current_run_); // free vector
+        std::vector<ValueType>().swap(current_run_[0]); // free vector
 
         timer_preop_.Stop();
         if (stats_enabled) {
@@ -254,8 +255,8 @@ private:
     //! \name PreOp Phase
     //! \{
 
-    //! Current run data
-    VectorSequenceAdapter current_run_;
+    //! Current run data (in a vector so it does not have to be reallocated when passing to run_multisequence...)
+    std::vector<VectorSequenceAdapter> current_run_;
     //! Runs in the first phase of the algorithm
     std::vector<data::FilePtr> run_files_;
     //! Number of items on this worker
@@ -289,9 +290,9 @@ private:
 
     //! \}
 
-    void ScatterRun(std::vector<ValueType> run_seq,
-                    data::StreamData::Writers &data_writers,
-                    std::vector<size_t> &offsets) {
+    void ScatterRun(std::vector<ValueType>& run_seq,
+                    data::StreamData::Writers& data_writers,
+                    std::vector<size_t>& offsets) {
         size_t run_size = run_seq.size();
         size_t my_rank = context_.my_rank();
         size_t worker_count = offsets.size();
@@ -320,19 +321,17 @@ private:
         LOG << "Phase 1.";
         LOG << "Sort run locally.";
         timer_sort_.Start();
-        sort_algorithm_(current_run_.begin(), current_run_.end(), compare_function_);
+        sort_algorithm_(current_run_[0].begin(), current_run_[0].end(), compare_function_);
         timer_sort_.Stop();
 
         // Calculate Splitters
         auto splitter_count = p_ - 1;
         LOG << "Calculating " << splitter_count << " splitters.";
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(1));
-        std::vector<VectorSequenceAdapter> current_run_vector(1);
-        current_run_vector[0] = current_run_;
         // TODO What to do when some PEs do not get the same amount of runs. (Dummy runs so every PE creates same amount of streams)
         timer_selection_.Start();
         core::run_multisequence_selection<VectorSequenceAdapter, CompareFunction>
-                (context_, compare_function_, current_run_vector, &local_ranks,
+                (context_, compare_function_, current_run_, local_ranks,
                         splitter_count);
         timer_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;
@@ -346,13 +345,13 @@ private:
         std::transform(local_ranks.begin(), local_ranks.end(), offsets.begin(), [](std::vector<size_t> element) {
             return element[0];
         });
-        offsets[splitter_count] = current_run_.size();
+        offsets[splitter_count] = current_run_[0].size();
 
         LOG << "Scatter current run.";
         timer_scatter_.Start();
-        ScatterRun(current_run_, data_writers, offsets);
+        ScatterRun(current_run_[0], data_writers, offsets);
         timer_scatter_.Stop();
-        current_run_.clear();
+        current_run_[0].clear();
 
         auto data_readers = data_stream->GetReaders();
         LOG << "Building merge tree.";
@@ -389,7 +388,7 @@ private:
         }
         timer_selection_.Start();
         core::run_multisequence_selection<FileSequenceAdapter, CompareFunction>
-                (context_, compare_function_, run_file_adapters, &local_ranks,
+                (context_, compare_function_, run_file_adapters, local_ranks,
                         splitter_count);
         timer_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;

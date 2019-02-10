@@ -119,8 +119,8 @@ public:
         : context_(context), comparator_(comparator)
     {}
 
-    void GetEquallyDistantSplitterRanks(SequenceAdapters sequences,
-                          std::vector<std::vector<size_t>>* out_local_ranks, size_t splitter_count)
+    void GetEquallyDistantSplitterRanks(SequenceAdapters& sequences,
+                          std::vector<std::vector<size_t>>& out_local_ranks, size_t splitter_count)
     {
         // *** Setup Environment for merging ***
 
@@ -229,12 +229,12 @@ public:
 
             // Get global ranks and shrink ranges.
             stats_.search_step_timer_.Start();
-            GetGlobalRanks(sequences, pivots, global_ranks, *out_local_ranks, left, width);
+            GetGlobalRanks(sequences, pivots, global_ranks, out_local_ranks, left, width);
 
             LOG << "global_ranks: " << global_ranks;
-            LOG << "local_ranks: " << *out_local_ranks;
+            LOG << "local_ranks: " << out_local_ranks;
 
-            SearchStep(pivots, global_ranks, *out_local_ranks, target_ranks, left, width);
+            SearchStep(pivots, global_ranks, out_local_ranks, target_ranks, left, width);
 
             if (debug) {
                 for (size_t q = 0; q < seq_count; q++) {
@@ -373,7 +373,7 @@ private:
      * \param out_pivots The output pivots.
      */
     void SelectPivots(
-            SequenceAdapters sequences,
+            SequenceAdapters& sequences,
             const std::vector<std::vector<size_t>>& left,
             const std::vector<std::vector<size_t>>& width,
             std::vector<Pivot>& out_pivots) {
@@ -427,7 +427,7 @@ private:
      * Additionally returns the local ranks so we can use them in the next step.
      */
     void GetGlobalRanks(
-            SequenceAdapters sequences,
+            SequenceAdapters& sequences,
             const std::vector<Pivot>& pivots,
             std::vector<size_t>& global_ranks,
             std::vector<std::vector<size_t>>& out_local_ranks,
@@ -523,7 +523,7 @@ private:
 
 template <typename SequenceAdapterType, typename Comparator>
 void run_multisequence_selection(Context& context, const Comparator& comparator,
-        std::vector<SequenceAdapterType> sequences, std::vector<std::vector<size_t>>* out_local_ranks,
+        std::vector<SequenceAdapterType>& sequences, std::vector<std::vector<size_t>>& out_local_ranks,
         size_t splitter_count) {
     MultisequenceSelector<SequenceAdapterType, Comparator> selector(context, comparator);
     return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks, splitter_count);
