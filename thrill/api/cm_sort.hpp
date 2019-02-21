@@ -62,7 +62,7 @@ template <
 class CanonicalMergeSortNode final : public DOpNode<ValueType>
 {
     // TODO Unit test
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of stats
     static constexpr bool stats_enabled = true;
@@ -104,6 +104,7 @@ public:
     }
 
     void StartPreOp(size_t /* id */) final {
+        timer_total_.Start();
         timer_preop_.Start();
         current_run_.emplace_back(VectorSequenceAdapter());
         current_run_[0].reserve(run_capacity_);
@@ -141,13 +142,10 @@ public:
                 "CanonicalMergeSort() timer_sort_", timer_sort_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
                     "CanonicalMergeSort() timer_selection_", timer_selection_.SecondsDouble());
-            timer_selection_.Reset();
             context_.PrintCollectiveMeanStdev(
                     "CanonicalMergeSort() timer_scatter_", timer_scatter_.SecondsDouble());
-            timer_scatter_.Reset();
             context_.PrintCollectiveMeanStdev(
                     "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
-            timer_merge_.Reset();
         }
     }
 
@@ -221,6 +219,7 @@ public:
         }
 
         timer_pushdata.Stop();
+        timer_total_.Stop();
 
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
@@ -229,6 +228,20 @@ public:
                 "CanonicalMergeSort() timer_pushdata", timer_pushdata.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
                 "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
+            size_t p = context_.num_workers();
+            size_t total_time = context_.net.AllReduce(timer_total_.Milliseconds()) / p;
+            double sort = ((double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p) / total_time;
+            double communication = ((double) context_.net.AllReduce(timer_scatter_.Milliseconds()) / p) / total_time;
+            double merge = ((double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p) / total_time;
+            double other = 1 - sort - communication - merge;
+            size_t result_size = context_.net.AllReduce(local_size);
+            if (context_.my_rank() == 0) {
+                LOG1 << "RESULT " << "operation=canonical_merge_sort"
+                     << " total_time=" << total_time << " sort=" << sort
+                     << " merge=" << merge << " communication=" << communication
+                     << " other=" << other
+                     << " workers=" << p << " result_size=" << result_size;
+            }
         }
 
         /* } Phase 3 */
@@ -287,6 +300,9 @@ private:
 
     //! time spent in merging lists
     Timer timer_merge_;
+
+    //! total time spent
+    Timer timer_total_;
 
     //! \}
 

@@ -136,6 +136,7 @@ public:
     }
 
     void StartPreOp(size_t /* parent_index */) final {
+        timer_total_.Start();
         timer_preop_.Start();
         unsorted_writer_ = unsorted_file_.GetWriter();
     }
@@ -299,14 +300,28 @@ public:
         }
 
         timer_pushdata.Stop();
+        timer_total_.Stop();
 
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
                 "Sort() timer_pushdata", timer_pushdata.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
                 "Sort() timer_merge_", timer_merge_.SecondsDouble());
-
             context_.PrintCollectiveMeanStdev("Sort() local_size", local_size);
+            size_t p = context_.num_workers();
+            size_t total_time = context_.net.AllReduce(timer_total_.Milliseconds()) / p;
+            double sort = ((double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p) / total_time;
+            double communication = ((double) context_.net.AllReduce(timer_communication_.Milliseconds()) / p) / total_time;
+            double merge = ((double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p) / total_time;
+            double other = 1 - sort - communication - merge;
+            size_t result_size = context_.net.AllReduce(local_size);
+            if (context_.my_rank() == 0) {
+                LOG1 << "RESULT " << "operation=sort"
+                     << " total_time=" << total_time << " sort=" << sort
+                     << " merge=" << merge << " communication=" << communication
+                     << " other=" << other
+                     << " workers=" << p << " result_size=" << result_size;
+            }
         }
     }
 
@@ -380,6 +395,9 @@ private:
 
     //! time spent in sort()
     Timer timer_sort_;
+
+    //! total time spent
+    Timer timer_total_;
 
     //! \}
 
