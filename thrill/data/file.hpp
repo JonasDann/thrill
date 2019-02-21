@@ -85,7 +85,7 @@ public:
 
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first.
-    void AppendBlock(const Block& b) {
+    void AppendBlock(const Block& b) { // TODO Für sampled files überschreiben und 1. Element speichern
         if (b.size() == 0) return;
         num_items_sum_.push_back(num_items() + b.num_items());
         size_bytes_ += b.size();
