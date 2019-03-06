@@ -276,6 +276,7 @@ private:
         size_t    tie_idx;
         size_t    segment_len;
         size_t    worker_rank;
+        size_t    sequence_idx;
     };
 
     //! Logging helper to print vectors of vectors of pivots.
@@ -408,7 +409,8 @@ private:
                     pivot_elem,
                     pivot_idx,
                     width[s][mp],
-                    context_.my_rank()
+                    context_.my_rank(),
+                    mp
             };
         }
 
@@ -498,9 +500,10 @@ private:
                 assert(left[s][p] <= local_rank);
 
                 if (target_ranks[s] > global_ranks[s]) {
-                    if (pivots[s].worker_rank == context_.my_rank()) {
+                    if (pivots[s].worker_rank == context_.my_rank() &&
+                        pivots[s].sequence_idx == p) {
                         LOG << "[" << stats_.iterations_ << "] increment (split: " << s << " seq: " << p << " pivot: " << pivots[s].value << ").";
-                        local_rank++; // +1 binary search only on worker that pivot is from
+                        local_rank++; // +1 binary search only on worker that pivot is from and only on sequence that pivot is from
                     }
                     width[s][p] -= local_rank - left[s][p];
                     left[s][p] = local_rank;
