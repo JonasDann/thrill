@@ -1,18 +1,16 @@
 /*******************************************************************************
- * thrill/api/cms_sort.hpp
+ * thrill/api/canonical_merge_sort.hpp
  *
  * Part of Project Thrill - http://project-thrill.org
  *
- * Copyright (C) 2015 Alexander Noe <aleexnoe@gmail.com>
- * Copyright (C) 2015 Michael Axtmann <michael.axtmann@kit.edu>
- * Copyright (C) 2015-2016 Timo Bingmann <tb@panthema.net>
+ * Copyright (C) 2018 Jonas Dann <jonas@dann.io>
  *
  * All rights reserved. Published under the BSD-2 license in the LICENSE file.
  ******************************************************************************/
 
 #pragma once
-#ifndef THRILL_API_CMS_SORT_HEADER
-#define THRILL_API_CMS_SORT_HEADER
+#ifndef THRILL_API_CANONICAL_MERGE_SORT_HEADER
+#define THRILL_API_CANONICAL_MERGE_SORT_HEADER
 
 #include <thrill/api/context.hpp>
 #include <thrill/api/dia.hpp>
@@ -42,7 +40,7 @@ namespace thrill {
 namespace api {
 
 /*!
- * A DIANode which performs a Sort operation. Sort sorts a DIA according to a
+ * A DIANode which performs a Sort operation. It sorts a DIA according to a
  * given compare function
  *
  * \tparam ValueType Type of DIA elements
@@ -50,8 +48,6 @@ namespace api {
  * \tparam CompareFunction Type of the compare function
  *
  * \tparam SortAlgorithm Type of the local sort function
- *
- * \tparam Stable Whether or not to use stable sorting mechanisms
  *
  * \ingroup api_layer
  */
@@ -72,10 +68,8 @@ class CanonicalMergeSortNode final : public DOpNode<ValueType>
 
     //! Timer or FakeTimer
     using Timer = common::StatsTimerBaseStopped<stats_enabled>;
-    //! RIAA class for running the timer
-    using RunTimer = common::RunTimer<Timer>;
 
-    size_t run_capacity_ = 15;
+    size_t run_capacity_;
 
 public:
     /*!
@@ -158,6 +152,7 @@ public:
         Timer timer_mainop;
         timer_mainop.Start();
         MainOp();
+        timer_mainop.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
                 "CanonicalMergeSort() timer_mainop", timer_mainop.SecondsDouble());
@@ -482,6 +477,6 @@ auto DIA<ValueType, Stack>::CanonicalMergeSort(const CompareFunction& compare_fu
 } // namespace api
 } // namespace thrill
 
-#endif // !THRILL_API_CMS_SORT_HEADER
+#endif // !THRILL_API_CANONICAL_MERGE_SORT_HEADER
 
 /******************************************************************************/
