@@ -11,7 +11,7 @@
 #include <thrill/api/dia.hpp>
 #include <thrill/api/generate.hpp>
 #include <thrill/api/size.hpp>
-#include <thrill/api/cm_sort.hpp>
+#include <thrill/api/canonical_merge_sort.hpp>
 #include <thrill/common/logger.hpp>
 #include <thrill/common/stats_timer.hpp>
 #include <tlx/cmdline_parser.hpp>
