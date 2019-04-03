@@ -58,7 +58,7 @@ template <
 class CanonicalMergeSortNode final : public DOpNode<ValueType>
 {
     // TODO Unit test
-    static constexpr bool debug = false;
+    static constexpr bool debug = true;
 
     //! Set this variable to true to enable generation and output of stats
     static constexpr bool stats_enabled = true;
@@ -202,7 +202,7 @@ public:
                     file_readers.begin(), file_readers.end(), compare_function_);
 
 
-            LOG << "Merging " << final_run_files_.size() << " files with prefetch" << prefetch << ".";
+            LOG << "Merging " << final_run_files_.size() << " files with prefetch " << prefetch << ".";
             timer_merge_.Start();
             while (file_merge_tree.HasNext()) {
                 auto next = file_merge_tree.Next();
@@ -350,6 +350,7 @@ private:
         // Redistribute Elements
         auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
         auto data_writers = data_stream->GetWriters();
+        auto data_readers = data_stream->GetReaders();
 
         // Construct offsets vector
         std::vector<size_t> offsets(splitter_count + 1);
@@ -364,7 +365,6 @@ private:
         timer_scatter_.Stop();
         current_run_[0].clear();
 
-        auto data_readers = data_stream->GetReaders();
         LOG << "Building merge tree.";
         auto multiway_merge_tree = core::make_multiway_merge_tree<ValueType>(
                 data_readers.begin(), data_readers.end(), compare_function_);
