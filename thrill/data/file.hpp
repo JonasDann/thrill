@@ -85,7 +85,7 @@ public:
 
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first.
-    void AppendBlock(const Block& b) { // TODO Für sampled files überschreiben und 1. Element speichern
+    virtual void AppendBlock(const Block& b) {
         if (b.size() == 0) return;
         num_items_sum_.push_back(num_items() + b.num_items());
         size_bytes_ += b.size();
@@ -96,7 +96,7 @@ public:
 
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first.
-    void AppendBlock(Block&& b) {
+    virtual void AppendBlock(Block&& b) {
         if (b.size() == 0) return;
         num_items_sum_.push_back(num_items() + b.num_items());
         size_bytes_ += b.size();
@@ -107,13 +107,13 @@ public:
 
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first.
-    void AppendBlock(const Block& b, bool /* is_last_block */) final {
+    virtual void AppendBlock(const Block& b, bool /* is_last_block */) {
         return AppendBlock(b);
     }
 
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first.
-    void AppendBlock(Block&& b, bool /* is_last_block */) final {
+    virtual void AppendBlock(Block&& b, bool /* is_last_block */) {
         return AppendBlock(std::move(b));
     }
 
@@ -136,7 +136,10 @@ public:
     //! \{
 
     //! Get BlockWriter.
-    Writer GetWriter(size_t block_size = default_block_size);
+    virtual Writer GetWriter(size_t block_size);
+
+    //! Get BlockWriter with default block size.
+    virtual Writer GetWriter();
 
     /*!
      * Get BlockReader or a consuming BlockReader for beginning of File
@@ -207,6 +210,7 @@ public:
     template <typename ItemType>
     ItemType GetItemAt(size_t index) const;
 
+    // TODO What do do here? Cannot be virtual.
     /*!
      * Get index of the given item, or the next greater item, in this file. The
      * file has to be ordered according to the given compare function. The tie
@@ -251,6 +255,12 @@ public:
     //! construction)
     void set_dia_id(size_t dia_id) { dia_id_ = dia_id; }
 
+protected:
+    //! inclusive prefixsum of number of elements of blocks, hence
+    //! num_items_sum_[i] is the number of items starting in all blocks
+    //! preceding and including the i-th block.
+    std::deque<size_t> num_items_sum_;
+
 private:
     //! unique file id
     size_t id_;
@@ -260,11 +270,6 @@ private:
 
     //! container holding Blocks and thus shared pointers to all byte blocks.
     std::deque<Block> blocks_;
-
-    //! inclusive prefixsum of number of elements of blocks, hence
-    //! num_items_sum_[i] is the number of items starting in all blocks
-    //! preceding and including the i-th block.
-    std::deque<size_t> num_items_sum_;
 
     //! Total size of this file in bytes. Sum of all block sizes.
     size_t size_bytes_ = 0;

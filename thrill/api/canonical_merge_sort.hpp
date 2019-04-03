@@ -250,7 +250,7 @@ private:
     size_t p_;
 
     using VectorSequenceAdapter = core::MultisequenceSelectorVectorSequenceAdapter<ValueType>;
-    using FileSequenceAdapter = core::MultisequenceSelectorFileSequenceAdapter<ValueType>;
+    using FileSequenceAdapter = core::MultisequenceSelectorSampledFileSequenceAdapter<ValueType>;
 
     using LocalRanks = std::vector<std::vector<size_t>>;
 
@@ -266,7 +266,7 @@ private:
     //! Current run data (in a vector so it does not have to be reallocated when passing to run_multisequence...)
     std::vector<VectorSequenceAdapter> current_run_;
     //! Runs in the first phase of the algorithm
-    std::vector<data::FilePtr> run_files_;
+    std::vector<data::SampledFilePtr<ValueType>> run_files_;
     //! Number of items on this worker
     size_t local_items_ = 0;
 
@@ -370,7 +370,7 @@ private:
                 data_readers.begin(), data_readers.end(), compare_function_);
 
         LOG << "Merging into run file.";
-        run_files_.emplace_back(context_.GetFilePtr(this));
+        run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(this));
         auto current_run_file_writer = run_files_.back()->GetWriter();
         timer_merge_.Start();
         while (multiway_merge_tree.HasNext()) {

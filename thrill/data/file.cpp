@@ -65,6 +65,10 @@ File::Writer File::GetWriter(size_t block_size) {
         FileBlockSink(tlx::CountingPtrNoDelete<File>(this)), block_size);
 }
 
+File::Writer File::GetWriter() {
+    return GetWriter(default_block_size);
+}
+
 File::KeepReader File::GetKeepReader(size_t prefetch_size) const {
     return KeepReader(
         KeepFileBlockSource(*this, local_worker_id_, prefetch_size));

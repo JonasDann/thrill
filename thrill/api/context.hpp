@@ -21,6 +21,7 @@
 #include <thrill/data/block_pool.hpp>
 #include <thrill/data/cat_stream.hpp>
 #include <thrill/data/file.hpp>
+#include <thrill/data/sampled_file.hpp>
 #include <thrill/data/mix_stream.hpp>
 #include <thrill/data/multiplexer.hpp>
 #include <thrill/net/flow_control_channel.hpp>
@@ -294,6 +295,16 @@ public:
     //! Returns a new File, wrapped in a CountingPtr, containing a sequence of
     //! local Blocks.
     data::FilePtr GetFilePtr(DIABase* dia);
+
+    //! Returns a new SampledFile, wrapped in a CountingPtr, containing a
+    //! sequence of local Blocks.
+    template <typename ItemType>
+    data::SampledFilePtr<ItemType> GetSampledFilePtr(size_t dia_id);
+
+    //! Returns a new SampledFile, wrapped in a CountingPtr, containing a
+    //! sequence of local Blocks.
+    template <typename ItemType>
+    data::SampledFilePtr<ItemType> GetSampledFilePtr(DIABase* dia);
 
     //! Returns a reference to a new CatStream. This method alters the state of
     //! the context and must be called on all Workers to ensure correct

@@ -28,14 +28,14 @@ namespace core {
 
 // TODO Unit Test
 template <typename ValueType_>
-class MultisequenceSelectorFileSequenceAdapter
+class MultisequenceSelectorSampledFileSequenceAdapter
 {
 public:
     typedef ValueType_ ValueType;
 
-    MultisequenceSelectorFileSequenceAdapter() = default;
+    MultisequenceSelectorSampledFileSequenceAdapter() = default;
 
-    explicit MultisequenceSelectorFileSequenceAdapter(data::FilePtr& file)
+    explicit MultisequenceSelectorSampledFileSequenceAdapter(data::SampledFilePtr<ValueType>& file)
         : file_(file)
     {}
 
@@ -51,11 +51,13 @@ public:
     template<typename Comparator>
     size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& comparator)
     {
-        return file_->GetIndexOf(item, tie, left, right, comparator);
+        (void) left;
+        (void) right;
+        return file_->GetFastIndexOf(item, tie, comparator);
     }
 
 private:
-    data::FilePtr file_;
+    data::SampledFilePtr<ValueType> file_;
 };
 
 template <typename ValueType_>
