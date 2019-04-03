@@ -3,6 +3,7 @@ build/**
 doxygen-html/**
 doxygen_sqlite3.db
 __pycache__
+tests/CMakeFiles
 
 # Compiled Object files
 *.slo

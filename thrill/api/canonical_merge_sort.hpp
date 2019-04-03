@@ -1,18 +1,16 @@
 /*******************************************************************************
- * thrill/api/cms_sort.hpp
+ * thrill/api/canonical_merge_sort.hpp
  *
  * Part of Project Thrill - http://project-thrill.org
  *
- * Copyright (C) 2015 Alexander Noe <aleexnoe@gmail.com>
- * Copyright (C) 2015 Michael Axtmann <michael.axtmann@kit.edu>
- * Copyright (C) 2015-2016 Timo Bingmann <tb@panthema.net>
+ * Copyright (C) 2018 Jonas Dann <jonas@dann.io>
  *
  * All rights reserved. Published under the BSD-2 license in the LICENSE file.
  ******************************************************************************/
 
 #pragma once
-#ifndef THRILL_API_CMS_SORT_HEADER
-#define THRILL_API_CMS_SORT_HEADER
+#ifndef THRILL_API_CANONICAL_MERGE_SORT_HEADER
+#define THRILL_API_CANONICAL_MERGE_SORT_HEADER
 
 #include <thrill/api/context.hpp>
 #include <thrill/api/dia.hpp>
@@ -42,7 +40,7 @@ namespace thrill {
 namespace api {
 
 /*!
- * A DIANode which performs a Sort operation. Sort sorts a DIA according to a
+ * A DIANode which performs a Sort operation. It sorts a DIA according to a
  * given compare function
  *
  * \tparam ValueType Type of DIA elements
@@ -50,8 +48,6 @@ namespace api {
  * \tparam CompareFunction Type of the compare function
  *
  * \tparam SortAlgorithm Type of the local sort function
- *
- * \tparam Stable Whether or not to use stable sorting mechanisms
  *
  * \ingroup api_layer
  */
@@ -62,7 +58,7 @@ template <
 class CanonicalMergeSortNode final : public DOpNode<ValueType>
 {
     // TODO Unit test
-    static constexpr bool debug = false;
+    static constexpr bool debug = true;
 
     //! Set this variable to true to enable generation and output of stats
     static constexpr bool stats_enabled = true;
@@ -72,10 +68,8 @@ class CanonicalMergeSortNode final : public DOpNode<ValueType>
 
     //! Timer or FakeTimer
     using Timer = common::StatsTimerBaseStopped<stats_enabled>;
-    //! RIAA class for running the timer
-    using RunTimer = common::RunTimer<Timer>;
 
-    size_t run_capacity_ = 15;
+    size_t run_capacity_;
 
 public:
     /*!
@@ -158,6 +152,7 @@ public:
         Timer timer_mainop;
         timer_mainop.Start();
         MainOp();
+        timer_mainop.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
                 "CanonicalMergeSort() timer_mainop", timer_mainop.SecondsDouble());
@@ -207,7 +202,7 @@ public:
                     file_readers.begin(), file_readers.end(), compare_function_);
 
 
-            LOG << "Merging " << final_run_files_.size() << " files with prefetch" << prefetch << ".";
+            LOG << "Merging " << final_run_files_.size() << " files with prefetch " << prefetch << ".";
             timer_merge_.Start();
             while (file_merge_tree.HasNext()) {
                 auto next = file_merge_tree.Next();
@@ -355,6 +350,7 @@ private:
         // Redistribute Elements
         auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
         auto data_writers = data_stream->GetWriters();
+        auto data_readers = data_stream->GetReaders();
 
         // Construct offsets vector
         std::vector<size_t> offsets(splitter_count + 1);
@@ -369,7 +365,6 @@ private:
         timer_scatter_.Stop();
         current_run_[0].clear();
 
-        auto data_readers = data_stream->GetReaders();
         LOG << "Building merge tree.";
         auto multiway_merge_tree = core::make_multiway_merge_tree<ValueType>(
                 data_readers.begin(), data_readers.end(), compare_function_);
@@ -482,6 +477,6 @@ auto DIA<ValueType, Stack>::CanonicalMergeSort(const CompareFunction& compare_fu
 } // namespace api
 } // namespace thrill
 
-#endif // !THRILL_API_CMS_SORT_HEADER
+#endif // !THRILL_API_CANONICAL_MERGE_SORT_HEADER
 
 /******************************************************************************/
