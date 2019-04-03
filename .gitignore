@@ -3,7 +3,6 @@ build/**
 doxygen-html/**
 doxygen_sqlite3.db
 __pycache__
-cmake-build-debug
 tests/CMakeFiles
 
 # Compiled Object files
