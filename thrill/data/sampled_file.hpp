@@ -104,29 +104,28 @@ public:
     template <typename Comparator = std::less<ItemType>>
     size_t GetFastIndexOf(const ItemType& item, size_t tie, size_t left,
             size_t right, const Comparator& func = Comparator()) const {
-        (void) left;
-        (void) right;
         LOG << "item: " << item;
         size_t block_index = std::lower_bound(block_samples_.begin(),
-                block_samples_.end(), item, func) - block_samples_.begin() - 1;
-        if (block_index + 1 < 1) {
-            LOG << "result: 0";
-            return 0;
-        }
-        size_t block_left = 0;
+                block_samples_.end(), item, func) - block_samples_.begin();
+        size_t result = 0;
         if (block_index > 0) {
-            block_left = num_items_sum_[block_index - 1];
+            block_index--;
+
+            size_t block_left = 0;
+            if (block_index > 0) {
+                block_left = num_items_sum_[block_index - 1];
+            }
+            // TODO Tie
+            /*if (item == block_samples_[block_index] && block_index > 0) {
+                block_left = num_items_sum_[block_index - 1];
+            }*/
+            size_t block_right = num_items_sum_[block_index];
+            LOG << "block_index: " << block_index << " / " << block_samples_.size();
+            LOG << "range: [" << block_left << ", " << block_right << ")";
+            result = GetIndexOf<ItemType, Comparator>(item, tie, block_left, block_right, func);
         }
-        // TODO Tie
-        /*if (item == block_samples_[block_index] && block_index > 0) {
-            block_left = num_items_sum_[block_index - 1];
-        }*/
-        size_t block_right = num_items_sum_[block_index];
-        LOG << "block_index: " << block_index << " / " << block_samples_.size();
-        LOG << "range: [" << block_left << ", " << block_right << ")";
-        auto result = GetIndexOf<ItemType, Comparator>(item, tie, block_left, block_right, func);
         if (self_verify) {
-            auto real_index = GetIndexOf<ItemType, Comparator>(item, tie, 0, num_items_sum_.back(), func);
+            auto real_index = GetIndexOf<ItemType, Comparator>(item, tie, left, right, func);
             LOG << "result: " << result << " / " << real_index;
             die_unless(result == real_index);
         }

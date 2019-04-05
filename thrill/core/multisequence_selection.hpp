@@ -108,7 +108,7 @@ class MultisequenceSelector
     using ValueType = typename SequenceAdapterType::ValueType;
     using SequenceAdapters = typename std::vector<SequenceAdapterType>;
 
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
     static constexpr bool self_verify = debug && common::g_debug_mode;
 
     //! Set this variable to true to enable generation and output of merge stats
@@ -443,10 +443,13 @@ private:
             for (size_t s = 0; s < sequences.size(); s++) {
                 stats_.file_op_timer_.Start();
 
-                size_t idx = sequences[s].template GetIndexOf<Comparator>(
-                        pivots[p].value, pivots[p].tie_idx,
-                        left[p][s], left[p][s] + width[p][s],
-                        comparator_);
+                size_t idx = left[p][s];
+                if (width[p][s] > 0) {
+                    idx = sequences[s].template GetIndexOf<Comparator>(
+                            pivots[p].value, pivots[p].tie_idx,
+                            left[p][s], left[p][s] + width[p][s],
+                            comparator_);
+                }
 
                 stats_.file_op_timer_.Stop();
 
