@@ -21,7 +21,7 @@
 #include <thrill/common/qsort.hpp>
 #include <thrill/core/multisequence_selection.hpp>
 #include <thrill/core/multiway_merge.hpp>
-#include <thrill/data/file.hpp>
+#include <thrill/data/sampled_file.hpp>
 #include <thrill/data/block_reader.hpp>
 #include <thrill/net/group.hpp>
 

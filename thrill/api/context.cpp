@@ -1144,17 +1144,6 @@ data::FilePtr Context::GetFilePtr(DIABase* dia) {
     return GetFilePtr(dia != nullptr ? dia->dia_id() : 0);
 }
 
-template <typename ItemType>
-data::SampledFilePtr<ItemType> Context::GetSampledFilePtr(size_t dia_id) {
-    return tlx::make_counting<data::SampledFile<ItemType>>(
-            block_pool_, local_worker_id_, dia_id);
-}
-
-template <typename ItemType>
-data::SampledFilePtr<ItemType> Context::GetSampledFilePtr(DIABase* dia) {
-    return GetSampledFilePtr<ItemType>(dia != nullptr ? dia->dia_id() : 0);
-}
-
 data::CatStreamPtr Context::GetNewCatStream(size_t dia_id) {
     return multiplexer_.GetNewCatStream(local_worker_id_, dia_id);
 }

@@ -1,5 +1,6 @@
 # build
 build/**
+debug/**
 doxygen-html/**
 doxygen_sqlite3.db
 __pycache__

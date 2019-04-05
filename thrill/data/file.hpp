@@ -107,13 +107,13 @@ public:
 
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first.
-    virtual void AppendBlock(const Block& b, bool /* is_last_block */) {
+    void AppendBlock(const Block& b, bool /* is_last_block */) override {
         return AppendBlock(b);
     }
 
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first.
-    virtual void AppendBlock(Block&& b, bool /* is_last_block */) {
+    void AppendBlock(Block&& b, bool /* is_last_block */) override {
         return AppendBlock(std::move(b));
     }
 
@@ -136,10 +136,10 @@ public:
     //! \{
 
     //! Get BlockWriter.
-    virtual Writer GetWriter(size_t block_size);
+    Writer GetWriter(size_t block_size);
 
     //! Get BlockWriter with default block size.
-    virtual Writer GetWriter();
+    Writer GetWriter();
 
     /*!
      * Get BlockReader or a consuming BlockReader for beginning of File

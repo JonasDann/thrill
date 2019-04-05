@@ -13,6 +13,8 @@
 #define THRILL_DATA_SAMPLED_FILE_HEADER
 
 #include <thrill/data/file.hpp>
+#include <thrill/data/fwd.hpp>
+#include <tlx/die.hpp>
 
 namespace thrill {
 namespace data {
@@ -24,7 +26,7 @@ namespace data {
  * A SampledFile is a File with in memory samples of every Block. This is useful
  * whenever a search like GetIndexOf is performed often on a file that is on
  * disk. A notable example is Canonical Merge Sort and in particular the
- * Multisequence Selection used there.
+ * Multi Sequence Selection used there.
  *
  * With the in memory samples, only one block has to be accessed from disk for
  * every search.
@@ -32,7 +34,23 @@ namespace data {
 template <typename ItemType>
 class SampledFile : public File
 {
+    static constexpr bool debug = false;
+    static constexpr bool self_verify = false;
+
 public:
+    //! Constructor from BlockPool
+    SampledFile(BlockPool& block_pool, size_t local_worker_id, size_t dia_id) :
+        File(block_pool, local_worker_id, dia_id) {}
+
+    //! non-copyable: delete copy-constructor
+    SampledFile(const SampledFile&) = delete;
+    //! non-copyable: delete assignment operator
+    SampledFile& operator = (const SampledFile&) = delete;
+    //! move-constructor: default
+    SampledFile(SampledFile&&) noexcept = default;
+    //! move-assignment operator: default
+    SampledFile& operator = (SampledFile&&) noexcept = default;
+
     //! Append a block to this file, the block must contain given number of
     //! items after the offset first. Also saves the first element of the block
     //! as a sample.
@@ -40,6 +58,7 @@ public:
         auto sample_index = num_items();
         File::AppendBlock(b);
         block_samples_.emplace_back(GetItemAt<ItemType>(sample_index));
+        LOG << "AppendBlock (" << sample_index << ", " << block_samples_.back() << ")";
     }
 
     //! Append a block to this file, the block must contain given number of
@@ -49,6 +68,7 @@ public:
         auto sample_index = num_items();
         File::AppendBlock(std::move(b));
         block_samples_.emplace_back(GetItemAt<ItemType>(sample_index));
+        LOG << "AppendBlockMove (" << sample_index << ", " << block_samples_.back() << ")";
     }
 
     //! Append a block to this file, the block must contain given number of
@@ -65,16 +85,12 @@ public:
         return AppendBlock(std::move(b));
     }
 
-    //! Get BlockWriter.
-    Writer GetWriter(size_t block_size) override {
-        return Writer(
-                FileBlockSink(tlx::CountingPtrNoDelete<SampledFile>(this)),
-                block_size);
-    }
-
-    //! Get BlockWriter with default block size.
-    Writer GetWriter() override {
-        return GetWriter(default_block_size);
+    //! Appends the PinnedBlock
+    void AppendPinnedBlock(PinnedBlock&& b, bool is_last_block) override {
+        auto sample_index = num_items();
+        AppendBlock(std::move(b).MoveToBlock(), is_last_block);
+        block_samples_.emplace_back(GetItemAt<ItemType>(sample_index));
+        LOG << "AppendPinnedBlock (" << sample_index << ", " << block_samples_.back() << ")";
     }
 
     /*!
@@ -86,30 +102,39 @@ public:
      * The search is sped up by the Block samples.
      */
     template <typename Comparator = std::less<ItemType>>
-    size_t GetFastIndexOf(const ItemType& item, size_t tie,
-            const Comparator& func = Comparator()) const {
-        // TODO Use binary search here
-        if (item < block_samples_[0]) {
+    size_t GetFastIndexOf(const ItemType& item, size_t tie, size_t left,
+            size_t right, const Comparator& func = Comparator()) const {
+        (void) left;
+        (void) right;
+        LOG << "item: " << item;
+        size_t block_index = std::lower_bound(block_samples_.begin(),
+                block_samples_.end(), item, func) - block_samples_.begin() - 1;
+        if (block_index + 1 < 1) {
+            LOG << "result: 0";
             return 0;
         }
-        size_t block_index = 0;
-        while (block_index < block_samples_.size() &&
-               item < block_samples_[block_index + 1]) {
-            block_index++;
+        size_t block_left = 0;
+        if (block_index > 0) {
+            block_left = num_items_sum_[block_index - 1];
         }
-        if (block_index + 1 == block_samples_.size()) {
-            return num_items_sum_[block_index];
+        // TODO Tie
+        /*if (item == block_samples_[block_index] && block_index > 0) {
+            block_left = num_items_sum_[block_index - 1];
+        }*/
+        size_t block_right = num_items_sum_[block_index];
+        LOG << "block_index: " << block_index << " / " << block_samples_.size();
+        LOG << "range: [" << block_left << ", " << block_right << ")";
+        auto result = GetIndexOf<ItemType, Comparator>(item, tie, block_left, block_right, func);
+        if (self_verify) {
+            auto real_index = GetIndexOf<ItemType, Comparator>(item, tie, 0, num_items_sum_.back(), func);
+            LOG << "result: " << result << " / " << real_index;
+            die_unless(result == real_index);
         }
-        auto left = num_items_sum_[block_index];
-        auto right = num_items_sum_[block_index + 1] - 1;
-        return GetIndexOf<ItemType, Comparator>(item, tie, left, right, func);
+        return result;
     }
 private:
     std::deque<ItemType> block_samples_;
 };
-
-template <typename ItemType>
-using SampledFilePtr = tlx::CountingPtr<SampledFile<ItemType>>;
 
 //! \}
 

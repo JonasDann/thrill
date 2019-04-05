@@ -51,9 +51,7 @@ public:
     template<typename Comparator>
     size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& comparator)
     {
-        (void) left;
-        (void) right;
-        return file_->GetFastIndexOf(item, tie, comparator);
+        return file_->GetFastIndexOf(item, tie, left, right, comparator);
     }
 
 private:
@@ -110,7 +108,7 @@ class MultisequenceSelector
     using ValueType = typename SequenceAdapterType::ValueType;
     using SequenceAdapters = typename std::vector<SequenceAdapterType>;
 
-    static constexpr bool debug = false;
+    static constexpr bool debug = true;
     static constexpr bool self_verify = debug && common::g_debug_mode;
 
     //! Set this variable to true to enable generation and output of merge stats
