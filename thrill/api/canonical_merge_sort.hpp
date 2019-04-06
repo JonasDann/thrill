@@ -135,9 +135,9 @@ public:
             context_.PrintCollectiveMeanStdev(
                 "CanonicalMergeSort() timer_sort_", timer_sort_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_selection_", timer_selection_.SecondsDouble());
+                    "CanonicalMergeSort() timer_selection_", timer_preop_selection_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_scatter_", timer_scatter_.SecondsDouble());
+                    "CanonicalMergeSort() timer_scatter_", timer_preop_scatter_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
                     "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
         }
@@ -157,9 +157,9 @@ public:
             context_.PrintCollectiveMeanStdev(
                 "CanonicalMergeSort() timer_mainop", timer_mainop.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_selection_", timer_selection_.SecondsDouble());
+                "CanonicalMergeSort() timer_selection_", timer_global_selection_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_scatter_", timer_scatter_.SecondsDouble());
+                "CanonicalMergeSort() timer_scatter_", timer_global_scatter_.SecondsDouble());
         }
     }
 
@@ -225,16 +225,27 @@ public:
                 "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
             size_t p = context_.num_workers();
             size_t total_time = context_.net.AllReduce(timer_total_.Milliseconds()) / p;
-            double sort = ((double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p) / total_time;
-            double communication = ((double) context_.net.AllReduce(timer_scatter_.Milliseconds()) / p) / total_time;
-            double merge = ((double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p) / total_time;
-            double other = 1 - sort - communication - merge;
+            double sort = (double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p;
+            double preop_scatter = (double) context_.net.AllReduce(timer_preop_scatter_.Milliseconds()) / p;
+            double merge = (double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p;
+            double preop_selection = (double) context_.net.AllReduce(timer_preop_selection_.Milliseconds()) / p;
+            double run_formation = (double) context_.net.AllReduce(timer_preop_.Milliseconds()) / p;
+            double global_selection = (double) context_.net.AllReduce(timer_global_selection_.Milliseconds()) / p;
+            double global_scatter = (double) context_.net.AllReduce(timer_global_scatter_.Milliseconds()) / p;
+            double final_merge = (double) context_.net.AllReduce(timer_pushdata.Milliseconds()) / p;
+            double other = total_time - sort - preop_scatter - global_scatter -
+                    merge - preop_selection - global_selection;
             size_t result_size = context_.net.AllReduce(local_size);
             if (context_.my_rank() == 0) {
                 LOG1 << "RESULT " << "operation=canonical_merge_sort"
                      << " total_time=" << total_time << " sort=" << sort
-                     << " merge=" << merge << " communication=" << communication
-                     << " other=" << other
+                     << " merge=" << merge
+                     << " communication=" << preop_scatter + global_scatter
+                     << " selection=" << preop_selection + global_selection
+                     << " other=" << other << " run_formation=" << run_formation
+                     << " global_selection=" << global_selection
+                     << " global_scatter=" << global_scatter
+                     << " final_merge=" << final_merge
                      << " workers=" << p << " result_size=" << result_size;
             }
         }
@@ -287,11 +298,17 @@ private:
     //! time spent in sort()
     Timer timer_sort_;
 
-    //! time spent in multisequence selection
-    Timer timer_selection_;
+    //! time spent preop in multisequence selection
+    Timer timer_preop_selection_;
 
-    //! time spent in communication
-    Timer timer_scatter_;
+    //! time spent global in multisequence selection
+    Timer timer_global_selection_;
+
+    //! time spent preop in communication
+    Timer timer_preop_scatter_;
+
+    //! time spent global in communication
+    Timer timer_global_scatter_;
 
     //! time spent in merging lists
     Timer timer_merge_;
@@ -340,11 +357,11 @@ private:
         LOG << "Calculating " << splitter_count << " splitters.";
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(1));
         // TODO What to do when some PEs do not get the same amount of runs. (Dummy runs so every PE creates same amount of streams)
-        timer_selection_.Start();
+        timer_preop_selection_.Start();
         core::run_multisequence_selection<VectorSequenceAdapter, CompareFunction>
                 (context_, compare_function_, current_run_, local_ranks,
                         splitter_count);
-        timer_selection_.Stop();
+        timer_preop_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
@@ -360,9 +377,9 @@ private:
         offsets[splitter_count] = current_run_[0].size();
 
         LOG << "Scatter current run.";
-        timer_scatter_.Start();
+        timer_preop_scatter_.Start();
         ScatterRun(current_run_[0], data_writers, offsets);
-        timer_scatter_.Stop();
+        timer_preop_scatter_.Stop();
         current_run_[0].clear();
 
         LOG << "Building merge tree.";
@@ -397,11 +414,11 @@ private:
         for (size_t i = 0; i < run_count; i++) {
             run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
         }
-        timer_selection_.Start();
+        timer_global_selection_.Start();
         core::run_multisequence_selection<FileSequenceAdapter, CompareFunction>
                 (context_, compare_function_, run_file_adapters, local_ranks,
                         splitter_count);
-        timer_selection_.Stop();
+        timer_global_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
@@ -419,10 +436,10 @@ private:
             run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
             LOG << "Offsets: " << run_offsets;
 
-            timer_scatter_.Start();
+            timer_global_scatter_.Start();
             data_stream->template Scatter<ValueType>(*run_files_[run_index],
                     run_offsets, true);
-            timer_scatter_.Stop();
+            timer_global_scatter_.Stop();
 
             auto final_run_file = context_.GetFilePtr(this);
             final_run_files_.emplace_back(final_run_file);
