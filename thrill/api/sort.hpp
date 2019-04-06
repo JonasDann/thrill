@@ -310,15 +310,17 @@ public:
             context_.PrintCollectiveMeanStdev("Sort() local_size", local_size);
             size_t p = context_.num_workers();
             size_t total_time = context_.net.AllReduce(timer_total_.Milliseconds()) / p;
-            double sort = ((double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p) / total_time;
-            double communication = ((double) context_.net.AllReduce(timer_communication_.Milliseconds()) / p) / total_time;
-            double merge = ((double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p) / total_time;
-            double other = 1 - sort - communication - merge;
+            double sort = (double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p;
+            double communication = (double) context_.net.AllReduce(timer_communication_.Milliseconds()) / p;
+            double merge = (double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p;
+            double classification = (double) context_.net.AllReduce(timer_classification_.Milliseconds()) /p;
+            double other = total_time - sort - communication - merge - classification;
             size_t result_size = context_.net.AllReduce(local_size);
             if (context_.my_rank() == 0) {
                 LOG1 << "RESULT " << "operation=sort"
                      << " total_time=" << total_time << " sort=" << sort
                      << " merge=" << merge << " communication=" << communication
+                     << " classification=" << classification
                      << " other=" << other
                      << " workers=" << p << " result_size=" << result_size;
             }
