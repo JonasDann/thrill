@@ -22,6 +22,20 @@
 
 using namespace thrill; // NOLINT
 
+// Same element structure as in original CMS paper
+struct Record {
+    uint64_t key;
+    uint64_t value;
+
+    bool operator < (const Record& b) const {
+        return key < b.key;
+    }
+
+    friend std ::ostream& operator << (std::ostream& os, const Record& r) {
+        return os << r.key << r.value;
+    }
+} TLX_ATTRIBUTE_PACKED;
+
 int main(int argc, char* argv[]) {
 
     tlx::CmdlineParser clp;
@@ -43,14 +57,16 @@ int main(int argc, char* argv[]) {
     api::Run(
             [&iterations, &size](api::Context& ctx) {
                 for (int i = 0; i < iterations; i++) {
-                    std::default_random_engine generator(std::random_device { } ());
-                    std::uniform_int_distribution<size_t> distribution(0, std::numeric_limits<size_t>::max());
+                    std::default_random_engine generator(std::random_device {} ());
+                    std::uniform_int_distribution<uint64_t> distribution(0, std::numeric_limits<uint64_t>::max());
 
                     common::StatsTimerStart timer;
                     api::Generate(
-                            ctx, size / sizeof(size_t),
-                            [&distribution, &generator](size_t) -> size_t {
-                                return distribution(generator);
+                            ctx, size / sizeof(Record),
+                            [&distribution, &generator](size_t) -> Record {
+                                uint64_t key = distribution(generator);
+                                Record r{key, key};
+                                return r;
                             })
                             .CanonicalMergeSort().Size();
                     timer.Stop();
