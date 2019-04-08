@@ -221,7 +221,7 @@ public:
             }
             timer_merge_.Stop();
             LOG << "Finished merging (first element: " << first_element
-                << ", last_element: " << last_element << ").";
+                << ", last element: " << last_element << ").";
         }
 
         timer_pushdata.Stop();

@@ -240,11 +240,10 @@ public:
                 }
             }
 
-            // We check for accuracy of 1
             finished = true;
             for (size_t r = 0; r < splitter_count; r++) {
                 size_t a = global_ranks[r], b = target_ranks[r];
-                if (tlx::abs_diff(a, b) > seq_count) { // TODO can this be "> 0"?
+                if (tlx::abs_diff(a, b) > 0) {
                     finished = false;
                     break;
                 }
