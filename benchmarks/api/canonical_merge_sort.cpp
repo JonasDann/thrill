@@ -11,6 +11,7 @@
 #include <thrill/api/dia.hpp>
 #include <thrill/api/generate.hpp>
 #include <thrill/api/size.hpp>
+#include <thrill/api/all_gather.hpp>
 #include <thrill/api/canonical_merge_sort.hpp>
 #include <thrill/common/logger.hpp>
 #include <thrill/common/stats_timer.hpp>
@@ -35,6 +36,8 @@ struct Record {
         return os << r.key << r.value;
     }
 } TLX_ATTRIBUTE_PACKED;
+
+constexpr bool self_verify = false;
 
 int main(int argc, char* argv[]) {
 
@@ -61,14 +64,22 @@ int main(int argc, char* argv[]) {
                     std::uniform_int_distribution<uint64_t> distribution(0, std::numeric_limits<uint64_t>::max());
 
                     common::StatsTimerStart timer;
-                    api::Generate(
+                    auto sorted = api::Generate(
                             ctx, size / sizeof(Record),
                             [&distribution, &generator](size_t) -> Record {
                                 uint64_t key = distribution(generator);
                                 Record r{key, key};
                                 return r;
                             })
-                            .CanonicalMergeSort().Size();
+                            .CanonicalMergeSort();
+                    if (self_verify) {
+                        auto result = sorted.AllGather();
+                        for (size_t j = 1; j < result.size(); j++) {
+                            die_unless(result[i - 1] < result[i]);
+                        }
+                    } else {
+                        sorted.Size();
+                    }
                     timer.Stop();
                     if (!ctx.my_rank()) {
                         LOG1 << "ITERATION " << i << " RESULT" << " time=" << timer;
