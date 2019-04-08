@@ -97,6 +97,9 @@ public:
     //! Gets a CatBlockSource which includes all incoming queues of this stream.
     CatBlockSource GetCatBlockSource(bool consume);
 
+    //! Gets a File which includes all blocks of all incoming queues in order.
+    void GetFile(FilePtr& out_file);
+
     //! Creates a BlockReader which concatenates items from all workers in
     //! worker rank order. The BlockReader is attached to one \ref
     //! CatBlockSource which includes all incoming queues of this stream.
@@ -183,6 +186,8 @@ public:
 
     //! Open a CatReader (function name matches a method in File and MixStream).
     CatReader GetReader(bool consume);
+
+    void GetFile(FilePtr& out_file);
 
 private:
     CatStreamDataPtr ptr_;

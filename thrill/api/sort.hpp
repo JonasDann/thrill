@@ -66,7 +66,7 @@ class SortNode final : public DOpNode<ValueType>
     static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of stats
-    static constexpr bool stats_enabled = false;
+    static constexpr bool stats_enabled = true;
 
     using Super = DOpNode<ValueType>;
     using Super::context_;
@@ -137,6 +137,7 @@ public:
     }
 
     void StartPreOp(size_t /* parent_index */) final {
+        timer_total_.Start();
         timer_preop_.Start();
         unsorted_writer_ = unsorted_file_.GetWriter();
     }
@@ -199,6 +200,10 @@ public:
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
                 "Sort() timer_execute", timer_execute_.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                    "Sort() timer_classification_", timer_classification_.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                "Sort() timer_communication_", timer_communication_.SecondsDouble());
         }
     }
 
@@ -255,9 +260,11 @@ public:
                 files_.emplace_back(context_.GetFile(this));
                 auto writer = files_.back().GetWriter();
 
+                timer_merge_.Start();
                 while (puller.HasNext()) {
                     writer.Put(puller.Next());
                 }
+                timer_merge_.Stop();
                 writer.Close();
 
                 // this clear is important to release references to the files.
@@ -285,19 +292,39 @@ public:
             auto puller = MakeMultiwayMergeTree(
                 seq.begin(), seq.end(), compare_function_);
 
+            timer_merge_.Start();
             while (puller.HasNext()) {
                 this->PushItem(puller.Next());
                 local_size++;
             }
+            timer_merge_.Stop();
         }
 
         timer_pushdata.Stop();
+        timer_total_.Stop();
 
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
                 "Sort() timer_pushdata", timer_pushdata.SecondsDouble());
-
+            context_.PrintCollectiveMeanStdev(
+                "Sort() timer_merge_", timer_merge_.SecondsDouble());
             context_.PrintCollectiveMeanStdev("Sort() local_size", local_size);
+            size_t p = context_.num_workers();
+            size_t total_time = context_.net.AllReduce(timer_total_.Milliseconds()) / p;
+            double sort = (double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p;
+            double communication = (double) context_.net.AllReduce(timer_communication_.Milliseconds()) / p;
+            double merge = (double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p;
+            double classification = (double) context_.net.AllReduce(timer_classification_.Milliseconds()) /p;
+            double other = total_time - sort - communication - merge - classification;
+            size_t result_size = context_.net.AllReduce(local_size);
+            if (context_.my_rank() == 0) {
+                LOG1 << "RESULT " << "operation=sort"
+                     << " total_time=" << total_time << " sort=" << sort
+                     << " merge=" << merge << " communication=" << communication
+                     << " classification=" << classification
+                     << " other=" << other
+                     << " workers=" << p << " result_size=" << result_size;
+            }
         }
     }
 
@@ -360,8 +387,20 @@ private:
     //! time spent in Execute
     Timer timer_execute_;
 
+    //! time spent communicating
+    Timer timer_communication_;
+
+    //! time spent classifying
+    Timer timer_classification_;
+
+    //! time spent merging lists
+    Timer timer_merge_;
+
     //! time spent in sort()
     Timer timer_sort_;
+
+    //! total time spent
+    Timer timer_total_;
 
     //! \}
 
@@ -396,6 +435,7 @@ private:
                                 / static_cast<double>(num_total_workers);
 
         // Send splitters to other workers
+        timer_communication_.Start();
         for (size_t i = 1; i < num_total_workers; ++i) {
             splitters.push_back(
                 samples[static_cast<size_t>(i * splitting_size)]);
@@ -403,6 +443,7 @@ private:
                 sample_writers[j].Put(splitters.back());
             }
         }
+        timer_communication_.Stop();
 
         for (size_t j = 1; j < num_total_workers; ++j)
             sample_writers[j].Close();
@@ -493,6 +534,7 @@ private:
 
         // classify all items (take two at once) and immediately transmit them.
 
+        timer_classification_.Start();
         const size_t stepsize = 2;
 
         size_t i = prefix_items;
@@ -535,8 +577,12 @@ private:
             assert(data_writers[b0].IsValid());
             assert(data_writers[b1].IsValid());
 
+            timer_classification_.Stop();
+            timer_communication_.Start();
             data_writers[b0].Put(el0);
             data_writers[b1].Put(el1);
+            timer_communication_.Stop();
+            timer_classification_.Start();
         }
 
         // last iteration of loop if we have an odd number of items.
@@ -559,8 +605,13 @@ private:
             }
 
             assert(data_writers[b0].IsValid());
+            timer_classification_.Stop();
+            timer_communication_.Start();
             data_writers[b0].Put(el0);
+            timer_communication_.Stop();
+            timer_classification_.Start();
         }
+        timer_classification_.Stop();
 
         // implicitly close writers and flush data
     }
@@ -596,11 +647,13 @@ private:
         // Send all samples to worker 0.
         data::MixStream::Writers sample_writers = sample_stream->GetWriters();
 
+        timer_communication_.Start();
         for (const SampleIndexPair& sample : samples_) {
             // send samples but add the local prefix to index ranks
             sample_writers[0].Put(
                 SampleIndexPair(sample.first, prefix_items + sample.second));
         }
+        timer_communication_.Stop();
         sample_writers[0].Close();
         tlx::vector_free(samples_);
 
@@ -623,9 +676,11 @@ private:
             }
             data::MixStream::MixReader reader =
                 sample_stream->GetMixReader(/* consume */ true);
+            timer_communication_.Start();
             while (reader.HasNext()) {
                 splitters.push_back(reader.template Next<SampleIndexPair>());
             }
+            timer_communication_.Stop();
         }
         sample_writers.clear();
         sample_stream.reset();
@@ -704,14 +759,18 @@ private:
         std::vector<ValueType> vec;
         vec.reserve(capacity);
 
+        timer_communication_.Start();
         while (reader.HasNext()) {
             if (!mem::memory_exceeded && vec.size() < capacity) {
                 vec.push_back(reader.template Next<ValueType>());
             }
             else {
+                timer_communication_.Stop();
                 SortAndWriteToFile(vec);
+                timer_communication_.Start();
             }
         }
+        timer_communication_.Stop();
 
         if (vec.size())
             SortAndWriteToFile(vec);
