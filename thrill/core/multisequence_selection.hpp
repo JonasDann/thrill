@@ -129,27 +129,20 @@ public:
         // Count of all local elements.
         size_t local_size = 0;
 
-        for (size_t i = 0; i < sequences.size(); i++) {
-            local_size += sequences[i].size();
+        for (size_t s = 0; s < sequences.size(); s++) {
+            local_size += sequences[s].size();
         }
 
-        // TODO Make this work again
-        // test that the data we got is sorted!
-        /*if (self_verify) {
-            for (size_t i = 0; i < ---; i++) {
-                auto reader = files[i]->GetKeepReader();
-                if (!reader.HasNext()) continue;
-
-                ValueType prev = reader.template Next<ValueType>();
-                while (reader.HasNext()) {
-                    ValueType next = reader.template Next<ValueType>();
-                    if (comparator_(next, prev)) {
+        // Test that the data we got is sorted.
+        if (self_verify) {
+            for (size_t s = 0; s < seq_count; s++) {
+                for (size_t n = 1; n < sequences[s].size(); n++) {
+                    if (comparator_(sequences[s][n - 1], sequences[s][n])) {
                         die("Merge input was not sorted!");
                     }
-                    prev = std::move(next);
                 }
             }
-        }*/
+        }
 
         // Count of all global elements.
         stats_.comm_timer_.Start();
@@ -210,13 +203,13 @@ public:
             LOG0 << "width: " << width;
 
             if (debug) {
-                for (size_t q = 0; q < seq_count; q++) {
+                for (size_t s = 0; s < seq_count; s++) {
                     std::ostringstream oss;
-                    for (size_t i = 0; i < splitter_count; ++i) {
-                        if (i != 0) oss << " # ";
-                        oss << '[' << left[i][q] << ',' << left[i][q] + width[i][q] << ')';
+                    for (size_t r = 0; r < splitter_count; ++r) {
+                        if (r != 0) oss << " # ";
+                        oss << '[' << left[r][s] << ',' << left[r][s] + width[r][s] << ')';
                     }
-                    LOG1 << "left/right[" << q << "]: " << oss.str();
+                    LOG1 << "left/right[" << s << "]: " << oss.str();
                 }
             }
 
@@ -237,20 +230,20 @@ public:
             SearchStep(pivots, global_ranks, out_local_ranks, target_ranks, left, width);
 
             if (debug) {
-                for (size_t q = 0; q < seq_count; q++) {
+                for (size_t s = 0; s < seq_count; s++) {
                     std::ostringstream oss;
-                    for (size_t i = 0; i < splitter_count; ++i) {
-                        if (i != 0) oss << " # ";
-                        oss << '[' << left[i][q] << ',' << left[i][q] + width[i][q] << ')';
+                    for (size_t r = 0; r < splitter_count; ++r) {
+                        if (r != 0) oss << " # ";
+                        oss << '[' << left[r][s] << ',' << left[r][s] + width[r][s] << ')';
                     }
-                    LOG1 << "left/right[" << q << "]: " << oss.str();
+                    LOG1 << "left/right[" << s << "]: " << oss.str();
                 }
             }
 
             // We check for accuracy of 1
             finished = true;
-            for (size_t i = 0; i < splitter_count; i++) {
-                size_t a = global_ranks[i], b = target_ranks[i];
+            for (size_t r = 0; r < splitter_count; r++) {
+                size_t a = global_ranks[r], b = target_ranks[r];
                 if (tlx::abs_diff(a, b) > seq_count) { // TODO can this be "> 0"?
                     finished = false;
                     break;
@@ -381,13 +374,13 @@ private:
 
         // Select a random pivot for the largest range we have for each
         // splitter.
-        for (size_t s = 0; s < width.size(); s++) {
-            size_t mp = 0;
+        for (size_t r = 0; r < width.size(); r++) {
+            size_t ms = 0;
 
             // Search for the largest range.
-            for (size_t p = 1; p < width[s].size(); p++) {
-                if (width[s][p] > width[s][mp]) {
-                    mp = p;
+            for (size_t s = 1; s < width[r].size(); s++) {
+                if (width[r][s] > width[r][ms]) {
+                    ms = s;
                 }
             }
 
@@ -395,22 +388,22 @@ private:
             // below, then an other worker's pivot will be taken for this range,
             // since our range is zero.
             ValueType pivot_elem = ValueType();
-            size_t pivot_idx = left[s][mp];
+            size_t pivot_idx = left[r][ms];
 
-            if (width[s][mp] > 0) {
-                pivot_idx = left[s][mp] + (width[s][mp] / 2);
-                assert(pivot_idx < sequences[mp].size());
+            if (width[r][ms] > 0) {
+                pivot_idx = left[r][ms] + (width[r][ms] / 2);
+                assert(pivot_idx < sequences[ms].size());
                 stats_.file_op_timer_.Start();
-                pivot_elem = sequences[mp][pivot_idx];
+                pivot_elem = sequences[ms][pivot_idx];
                 stats_.file_op_timer_.Stop();
             }
 
-            out_pivots[s] = Pivot {
+            out_pivots[r] = Pivot {
                     pivot_elem,
                     pivot_idx,
-                    width[s][mp],
+                    width[r][ms],
                     context_.my_rank(),
-                    mp
+                    ms
             };
         }
 
@@ -438,25 +431,25 @@ private:
 
         // Simply get the rank of each pivot in each file. Sum the ranks up
         // locally.
-        for (size_t p = 0; p < pivots.size(); p++) {
+        for (size_t r = 0; r < pivots.size(); r++) {
             size_t rank = 0;
             for (size_t s = 0; s < sequences.size(); s++) {
                 stats_.file_op_timer_.Start();
 
-                size_t idx = left[p][s];
-                if (width[p][s] > 0) {
+                size_t idx = left[r][s];
+                if (width[r][s] > 0) {
                     idx = sequences[s].template GetIndexOf<Comparator>(
-                            pivots[p].value, pivots[p].tie_idx,
-                            left[p][s], left[p][s] + width[p][s],
+                            pivots[r].value, pivots[r].tie_idx,
+                            left[r][s], left[r][s] + width[r][s],
                             comparator_);
                 }
 
                 stats_.file_op_timer_.Stop();
 
                 rank += idx;
-                out_local_ranks[p][s] = idx;
+                out_local_ranks[r][s] = idx;
             }
-            global_ranks[p] = rank;
+            global_ranks[r] = rank;
         }
 
         stats_.comm_timer_.Start();
@@ -492,35 +485,35 @@ private:
             std::vector<std::vector<size_t>>& left,
             std::vector<std::vector<size_t>>& width) {
 
-        for (size_t s = 0; s < width.size(); s++) {
-            for (size_t p = 0; p < width[s].size(); p++) {
+        for (size_t r = 0; r < width.size(); r++) {
+            for (size_t s = 0; s < width[r].size(); s++) {
 
-                if (width[s][p] == 0)
+                if (width[r][s] == 0)
                     continue;
 
-                size_t local_rank = local_ranks[s][p];
-                size_t old_width = width[s][p];
-                assert(left[s][p] <= local_rank);
+                size_t local_rank = local_ranks[r][s];
+                size_t old_width = width[r][s];
+                assert(left[r][s] <= local_rank);
 
-                if (target_ranks[s] > global_ranks[s]) {
-                    if (pivots[s].worker_rank == context_.my_rank() &&
-                        pivots[s].sequence_idx == p) {
-                        LOG << "[" << stats_.iterations_ << "] increment (split: " << s << " seq: " << p << " pivot: " << pivots[s].value << ").";
+                if (target_ranks[r] > global_ranks[r]) {
+                    if (pivots[r].worker_rank == context_.my_rank() &&
+                        pivots[r].sequence_idx == s) {
+                        LOG << "[" << stats_.iterations_ << "] increment (split: " << r << " seq: " << s << " pivot: " << pivots[r].value << ").";
                         local_rank++; // +1 binary search only on worker that pivot is from and only on sequence that pivot is from
                     }
-                    width[s][p] -= local_rank - left[s][p];
-                    left[s][p] = local_rank;
+                    width[r][s] -= local_rank - left[r][s];
+                    left[r][s] = local_rank;
                 }
-                else if (target_ranks[s] < global_ranks[s]) {
-                    width[s][p] = local_rank - left[s][p];
+                else if (target_ranks[r] < global_ranks[r]) {
+                    width[r][s] = local_rank - left[r][s];
                 } else {
-                    left[s][p] = local_rank;
-                    width[s][p] = 0;
+                    left[r][s] = local_rank;
+                    width[r][s] = 0;
                 }
-                assert(width[s][p] >= 0);
+                assert(width[r][s] >= 0);
 
                 if (debug) {
-                    die_unless(width[s][p] <= old_width);
+                    die_unless(width[r][s] <= old_width);
                 }
             }
         }
