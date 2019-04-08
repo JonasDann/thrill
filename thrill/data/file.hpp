@@ -210,7 +210,6 @@ public:
     template <typename ItemType>
     ItemType GetItemAt(size_t index) const;
 
-    // TODO What do do here? Cannot be virtual.
     /*!
      * Get index of the given item, or the next greater item, in this file. The
      * file has to be ordered according to the given compare function. The tie

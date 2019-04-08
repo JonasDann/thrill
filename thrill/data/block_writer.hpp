@@ -151,7 +151,6 @@ public:
                             first_offset_, nitems_,
                             /* typecode_verify */ static_cast<bool>(self_verify)),
                 /* is_last_block */ closed_);
-            // TODO sink_.FirstItem
         }
 
         // reset
@@ -162,7 +161,7 @@ public:
 
     //! Directly write Blocks to the underlying BlockSink (after flushing the
     //! current one if need be).
-    void AppendBlocks(const std::vector<Block>& blocks) { // TODO ggf. sampled block writer ableiten
+    void AppendBlocks(const std::vector<Block>& blocks) {
         Flush();
         for (std::vector<Block>::const_iterator bi = blocks.begin();
              bi != blocks.end(); ++bi) {
@@ -252,7 +251,7 @@ public:
 
         try {
             if (TLX_UNLIKELY(nitems_ == 0))
-                first_offset_ = current_ - bytes_->begin(); // TODO first_offset_ ist erstes Element
+                first_offset_ = current_ - bytes_->begin();
 
             ++nitems_;
 
@@ -414,7 +413,6 @@ private:
         end_ = bytes_->end();
         nitems_ = 0;
         first_offset_ = 0;
-        // TODO first element empty
     }
 
     //! current block, already allocated as shared ptr, since we want to use
