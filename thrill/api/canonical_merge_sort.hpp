@@ -204,13 +204,24 @@ public:
 
             LOG << "Merging " << final_run_files_.size() << " files with prefetch " << prefetch << ".";
             timer_merge_.Start();
+            ValueType first_element;
+            if (debug && file_merge_tree.HasNext()) {
+                first_element = file_merge_tree.Next();
+                this->PushItem(first_element);
+                local_size++;
+            }
+            ValueType last_element;
             while (file_merge_tree.HasNext()) {
                 auto next = file_merge_tree.Next();
                 this->PushItem(next);
+                if (debug) {
+                    last_element = next;
+                }
                 local_size++;
             }
             timer_merge_.Stop();
-            LOG << "Finished merging.";
+            LOG << "Finished merging (first element: " << first_element
+                << ", last_element: " << last_element << ").";
         }
 
         timer_pushdata.Stop();
@@ -419,7 +430,7 @@ private:
                 (context_, compare_function_, run_file_adapters, local_ranks,
                         splitter_count);
         timer_global_selection_.Stop();
-        LOG << "Local splitters: " << local_ranks;
+        LOG0 << "Local splitters: " << local_ranks;
 
         // Redistribute Elements
         LOG << "Scatter " << run_count << " run files.";
@@ -434,7 +445,10 @@ private:
                 return element[run_index];
             });
             run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
-            LOG << "Offsets: " << run_offsets;
+            LOG << "Offsets[" << run_index << "]: " << run_offsets;
+            LOG << run_offsets[context_.my_rank() + 1] -
+            run_offsets[context_.my_rank()] << " / " <<
+            run_files_[run_index]->num_items() << " elements will stay local.";
 
             timer_global_scatter_.Start();
             data_stream->template Scatter<ValueType>(*run_files_[run_index],
