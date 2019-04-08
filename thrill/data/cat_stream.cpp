@@ -176,15 +176,15 @@ CatStreamData::CatBlockSource CatStreamData::GetCatBlockSource(bool consume) {
     return CatBlockSource(std::move(result));
 }
 
-void CatStreamData::GetFile(FilePtr out_file, bool consume) {
-    auto block_source = GetCatBlockSource(consume);
-    auto block = block_source.NextBlock();
-
-    while(block.IsValid()) {
-        out_file->AppendBlock(block.ToBlock());
-
-        block.Reset();
-        block = block_source.NextBlock();
+void CatStreamData::GetFile(FilePtr& out_file) {
+    size_t worker = 0;
+    while (worker < num_workers()) {
+        auto block = queues_[worker].Pop();
+        if (block.IsValid()) {
+            out_file->AppendBlock(block);
+        } else {
+            worker++;
+        }
     }
 }
 
@@ -360,8 +360,8 @@ CatStream::CatReader CatStream::GetReader(bool consume) {
     return ptr_->GetReader(consume);
 }
 
-void CatStream::GetFile(FilePtr out_file, bool consume) {
-    return ptr_->GetFile(out_file, consume);
+void CatStream::GetFile(FilePtr& out_file) {
+    return ptr_->GetFile(out_file);
 }
 
 } // namespace data

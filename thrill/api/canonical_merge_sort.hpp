@@ -457,7 +457,7 @@ private:
 
             auto final_run_file = context_.GetFilePtr(this);
             final_run_files_.emplace_back(final_run_file);
-            data_stream->GetFile(final_run_file, true);
+            data_stream->GetFile(final_run_file);
 
             data_stream.reset();
         }
