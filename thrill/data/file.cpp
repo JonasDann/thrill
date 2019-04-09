@@ -116,7 +116,21 @@ KeepFileBlockSource::KeepFileBlockSource(
       prefetch_size_(prefetch_size),
       fetching_bytes_(0),
       first_block_(first_block), current_block_(first_block),
-      first_item_(first_item) { }
+      first_item_(first_item)
+{ }
+
+Block KeepFileBlockSource::MakeNextBlock() {
+    if (current_block_ == first_block_) {
+        // construct first block differently, in case we want to shorten it.
+        Block b = file_.block(current_block_++);
+        if (first_item_ != keep_first_item)
+            b.set_begin(first_item_);
+        return b;
+    }
+    else {
+        return file_.block(current_block_++);
+    }
+}
 
 void KeepFileBlockSource::Prefetch(size_t prefetch_size) {
     if (prefetch_size >= prefetch_size_) {
@@ -125,7 +139,7 @@ void KeepFileBlockSource::Prefetch(size_t prefetch_size) {
         while (fetching_bytes_ < prefetch_size_ &&
                current_block_ < file_.num_blocks())
         {
-            Block b = NextUnpinnedBlock();
+            Block b = MakeNextBlock();
             fetching_bytes_ += b.size();
             fetching_blocks_.emplace_back(b.Pin(local_worker_id_));
         }
@@ -137,14 +151,13 @@ void KeepFileBlockSource::Prefetch(size_t prefetch_size) {
 }
 
 PinnedBlock KeepFileBlockSource::NextBlock() {
-
     if (current_block_ >= file_.num_blocks() && fetching_blocks_.empty())
         return PinnedBlock();
 
     if (prefetch_size_ == 0)
     {
         // operate without prefetching
-        return NextUnpinnedBlock().PinWait(local_worker_id_);
+        return MakeNextBlock().PinWait(local_worker_id_);
     }
     else
     {
@@ -152,7 +165,7 @@ PinnedBlock KeepFileBlockSource::NextBlock() {
         while (fetching_bytes_ < prefetch_size_ &&
                current_block_ < file_.num_blocks())
         {
-            Block b = NextUnpinnedBlock();
+            Block b = MakeNextBlock();
             fetching_bytes_ += b.size();
             fetching_blocks_.emplace_back(b.Pin(local_worker_id_));
         }
@@ -165,18 +178,23 @@ PinnedBlock KeepFileBlockSource::NextBlock() {
     }
 }
 
-//! Determine current unpinned Block to deliver via NextBlock()
-Block KeepFileBlockSource::NextUnpinnedBlock() {
-    if (current_block_ == first_block_) {
-        // construct first block differently, in case we want to shorten it.
-        Block b = file_.block(current_block_++);
-        if (first_item_ != keep_first_item)
-            b.set_begin(first_item_);
-        return b;
+Block KeepFileBlockSource::NextBlockUnpinned() {
+    if (TLX_UNLIKELY(prefetch_size_ != 0 && !fetching_blocks_.empty())) {
+        // next block already prefetched, return it, but don't prefetch more
+        PinnedBlock b = fetching_blocks_.front()->Wait();
+        fetching_bytes_ -= b.size();
+        fetching_blocks_.pop_front();
+        return std::move(b).MoveToBlock();
     }
-    else {
-        return file_.block(current_block_++);
-    }
+
+    if (current_block_ >= file_.num_blocks())
+        return Block();
+
+    return MakeNextBlock();
+}
+
+PinnedBlock KeepFileBlockSource::AcquirePin(const Block& block) {
+    return block.PinWait(local_worker_id_);
 }
 
 /******************************************************************************/
@@ -240,6 +258,29 @@ PinnedBlock ConsumeFileBlockSource::NextBlock() {
     fetching_bytes_ -= b.size();
     fetching_blocks_.pop_front();
     return b;
+}
+
+Block ConsumeFileBlockSource::NextBlockUnpinned() {
+    assert(file_);
+
+    if (TLX_UNLIKELY(prefetch_size_ != 0 && !fetching_blocks_.empty())) {
+        // next block already prefetched, return it, but don't prefetch more
+        PinnedBlock b = fetching_blocks_.front()->Wait();
+        fetching_bytes_ -= b.size();
+        fetching_blocks_.pop_front();
+        return std::move(b).MoveToBlock();
+    }
+
+    if (file_->blocks_.empty())
+        return Block();
+
+    Block b = file_->blocks_.front();
+    file_->blocks_.pop_front();
+    return b;
+}
+
+PinnedBlock ConsumeFileBlockSource::AcquirePin(const Block& block) {
+    return block.PinWait(local_worker_id_);
 }
 
 ConsumeFileBlockSource::~ConsumeFileBlockSource() {

@@ -300,8 +300,8 @@ private:
                 tx_items[r] += offsets[r + 1] - offsets[r];
             }
 
-            streams_[j]->template Scatter<ValueType>(
-                *files_[j], offsets, /* consume */ true);
+            streams_[j]->template ScatterConsume<ValueType>(
+                *files_[j], offsets);
         }
 
         LOG << "tx_items: " << tx_items;
