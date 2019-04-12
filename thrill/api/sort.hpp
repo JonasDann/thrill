@@ -109,7 +109,7 @@ class SortNode final : public DOpNode<ValueType>
         }
     };
 
-    using MakeMultiwayMergeTreeDelegate = typename std::conditional<
+    using MakeMultiwayMergeTree = typename std::conditional<
         Stable,
         MakeStableMultiwayMergeTree, MakeDefaultMultiwayMergeTree>::type;
 
@@ -231,7 +231,6 @@ public:
             this->PushFile(files_[0], consume);
         }
         else {
-            MakeMultiwayMergeTreeDelegate MakeMultiwayMergeTree;
             size_t merge_degree, prefetch;
 
             // merge batches of files if necessary
@@ -239,39 +238,9 @@ public:
                        context_.block_pool().MaxMergeDegreePrefetch(files_.size()),
                    files_.size() > merge_degree)
             {
-                sLOG1 << "Partial multi-way-merge of"
-                      << merge_degree << "files with prefetch" << prefetch;
-
-                // create merger for first merge_degree_ Files
-                std::vector<data::File::ConsumeReader> seq;
-                seq.reserve(merge_degree);
-
-                for (size_t t = 0; t < merge_degree; ++t) {
-                    seq.emplace_back(
-                        files_[t].GetConsumeReader(/* prefetch */ 0));
-                }
-
-                StartPrefetch(seq, prefetch);
-
-                auto puller = MakeMultiwayMergeTree(
-                    seq.begin(), seq.end(), compare_function_);
-
-                // create new File for merged items
-                files_.emplace_back(context_.GetFile(this));
-                auto writer = files_.back().GetWriter();
-
                 timer_merge_.Start();
-                while (puller.HasNext()) {
-                    writer.Put(puller.Next());
-                }
+                PartialMultiwayMerge(merge_degree, prefetch);
                 timer_merge_.Stop();
-                writer.Close();
-
-                // this clear is important to release references to the files.
-                seq.clear();
-
-                // remove merged files
-                files_.erase(files_.begin(), files_.begin() + merge_degree);
             }
 
             sLOGC(context_.my_rank() == 0)
@@ -289,7 +258,7 @@ public:
 
             StartPrefetch(seq, prefetch);
 
-            auto puller = MakeMultiwayMergeTree(
+            auto puller = MakeMultiwayMergeTree()(
                 seq.begin(), seq.end(), compare_function_);
 
             timer_merge_.Start();
@@ -372,7 +341,7 @@ private:
     //! \{
 
     //! Local data files
-    std::deque<data::File> files_;
+    std::vector<data::File> files_;
     //! Total number of local elements after communication
     size_t local_out_size_ = 0;
 
@@ -756,12 +725,14 @@ private:
 
         // M/2 such that the other half is used to prepare the next bulk
         size_t capacity = DIABase::mem_limit_ / sizeof(ValueType) / 2;
+        size_t capacity_half = capacity / 2;
         std::vector<ValueType> vec;
         vec.reserve(capacity);
 
         timer_communication_.Start();
         while (reader.HasNext()) {
-            if (!mem::memory_exceeded && vec.size() < capacity) {
+            if (vec.size() < capacity_half ||
+                (vec.size() < capacity && !mem::memory_exceeded)) {
                 vec.push_back(reader.template Next<ValueType>());
             }
             else {
@@ -785,6 +756,8 @@ private:
 
         LOG << "SortAndWriteToFile() " << vec.size()
             << " items into file #" << files_.size();
+
+        die_unless(vec.size() > 0);
 
         size_t vec_size = vec.size();
         local_out_size_ += vec.size();
@@ -825,6 +798,50 @@ private:
             << "items" << vec_size
             << "timer_sort_" << timer_sort_
             << "write_time" << write_time;
+    }
+
+    void PartialMultiwayMerge(size_t merge_degree, size_t prefetch) {
+        sLOG1 << "Partial multi-way-merge of" << files_.size()
+              << "files with degree" << merge_degree
+              << "and prefetch" << prefetch;
+
+        std::vector<data::File> new_files;
+
+        // merge batches of merge_degree Files into new_files
+        size_t fi;
+        for (fi = 0; fi + merge_degree < files_.size(); fi += merge_degree) {
+            // create merger for first merge_degree Files
+            std::vector<data::File::ConsumeReader> seq;
+            seq.reserve(merge_degree);
+
+            for (size_t t = 0; t < merge_degree; ++t) {
+                seq.emplace_back(
+                    files_[fi + t].GetConsumeReader(/* prefetch */ 0));
+            }
+
+            StartPrefetch(seq, prefetch);
+
+            auto puller = MakeMultiwayMergeTree()(
+                seq.begin(), seq.end(), compare_function_);
+
+            // create new File for merged items
+            new_files.emplace_back(context_.GetFile(this));
+            auto writer = new_files.back().GetWriter();
+
+            while (puller.HasNext()) {
+                writer.Put(puller.Next());
+            }
+            writer.Close();
+
+            // merged files are cleared by the ConsumeReader
+        }
+
+        // copy remaining files into new_files
+        for ( ; fi < files_.size(); ++fi) {
+            new_files.emplace_back(std::move(files_[fi]));
+        }
+
+        std::swap(files_, new_files);
     }
 };
 
