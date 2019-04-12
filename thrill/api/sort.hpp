@@ -23,6 +23,7 @@
 #include <thrill/common/qsort.hpp>
 #include <thrill/common/reservoir_sampling.hpp>
 #include <thrill/core/multiway_merge.hpp>
+#include <thrill/core/online_sampler.hpp>
 #include <thrill/data/file.hpp>
 #include <thrill/net/group.hpp>
 
