@@ -117,7 +117,7 @@ public:
                 positions[minimum_index]++;
                 looser_tree.delete_min_insert(
                         level[minimum_index].elements_[positions[minimum_index]],
-                        false);
+                        positions[minimum_index] < k_ - 1);
             }
             buffers_[target_buffer_index].Put(sample);
         }
