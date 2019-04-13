@@ -12,6 +12,10 @@
 #ifndef THRILL_API_ONLINE_SAMPLE_SORT_HEADER
 #define THRILL_API_ONLINE_SAMPLE_SORT_HEADER
 
+#include <thrill/api/dia.hpp>
+#include <thrill/api/dop_node.hpp>
+#include <thrill/core/online_sampler.hpp>
+
 namespace thrill {
 namespace api {
 
@@ -21,7 +25,7 @@ namespace api {
  *
  * \tparam ValueType Type of DIA elements
  *
- * \tparam CompareFunction Type of the compare function
+ * \tparam Comparator Type of the compare function
  *
  * \tparam SortAlgorithm Type of the local sort function
  *
@@ -29,7 +33,7 @@ namespace api {
  */
 template <
         typename ValueType,
-        typename CompareFunction,
+        typename Comparator,
         typename SortAlgorithm>
 class OnlineSampleSortNode final : public DOpNode<ValueType>
 {
@@ -53,11 +57,11 @@ public:
      */
     template <typename ParentDIA>
     OnlineSampleSortNode(const ParentDIA& parent,
-                           const CompareFunction& compare_function,
+                           const Comparator& comparator,
                            const SortAlgorithm& sort_algorithm = SortAlgorithm())
             : Super(parent.ctx(), "Online Sample Sort", { parent.id() }, { parent.node() }),
-              compare_function_(compare_function),
-              sort_algorithm_(sort_algorithm)
+              comparator_(comparator), sort_algorithm_(sort_algorithm),
+              sampler_(10, 60, parent.ctx(), comparator, sort_algorithm)
     {
         // Hook PreOp(s)
         auto pre_op_fn = [this](const ValueType& input) {
@@ -76,7 +80,6 @@ public:
     void StartPreOp(size_t /* id */) final {
         timer_total_.Start();
         timer_preop_.Start();
-        buffers_.reserve(capacity_);
     }
 
     void PreOp(const ValueType& input) {
@@ -100,14 +103,6 @@ public:
                     "CanonicalMergeSort() preop local_items_", local_items_);
             context_.PrintCollectiveMeanStdev(
                     "CanonicalMergeSort() timer_preop_", timer_preop_.SecondsDouble());
-            context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_sort_", timer_sort_.SecondsDouble());
-            context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_partition_", timer_partition_.SecondsDouble());
-            context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_communication_", timer_communication_.SecondsDouble());
-            context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
         }
     }
 
@@ -124,10 +119,6 @@ public:
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
                     "CanonicalMergeSort() timer_mainop", timer_mainop.SecondsDouble());
-            context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_partition_", timer_partition_.SecondsDouble());
-            context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_communication_", timer_communication_.SecondsDouble());
         }
     }
 
@@ -149,7 +140,7 @@ private:
     size_t p_;
 
     //! The comparison function which is applied to two elements.
-    CompareFunction compare_function_;
+    Comparator comparator_;
 
     //! Sort function class
     SortAlgorithm sort_algorithm_;
@@ -157,8 +148,8 @@ private:
     //! \name PreOp Phase
     //! \{
 
-    //! Current buffers
-    std::vector<VectorSequenceAdapter> buffers_;
+    //! Online sampler
+    core::OnlineSampler<ValueType, Comparator, SortAlgorithm> sampler_;
     //! Number of items on this worker
     size_t local_items_ = 0;
 
