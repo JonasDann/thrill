@@ -51,9 +51,7 @@ class OnlineSampler {
         std::vector<ValueType> elements_;
         bool sorted_;
 
-        explicit Buffer(size_t k) : weight_(0), sorted_(false), k_(k) {
-            elements_.reserve(k);
-        }
+        explicit Buffer(size_t k) : weight_(0), sorted_(false), k_(k) {}
 
         bool Put(ValueType value) {
             assert(HasCapacity());
@@ -122,7 +120,7 @@ public:
             element_count += level.back().elements_.size();
         }
         size_t weight_sum = 0;
-        for (int i = 0; i < level.size(); i++) {
+        for (size_t i = 0; i < level.size(); i++) {
             if (!level[i].sorted_) {
                 sort_algorithm_(level[i].elements_.begin(),
                         level[i].elements_.end(), comparator_);
@@ -139,9 +137,17 @@ public:
 
         size_t total_index = 0;
         std::vector<size_t> positions(level.size(), 0);
-        // TODO Handle non full buffers, by advancing total_index and positions
-        //  in advance
-        for (int j = 0; j < k_; j++) {
+
+        // Advance total_index for amount of empty elements and calculate number
+        // of empty elements in target buffer.
+        for (size_t i = 0; i < level.size(); i++) {
+            size_t empty_elements = k_ - level[i].elements_.size();
+            total_index += empty_elements * level[i].weight_;
+        }
+        size_t target_buffer_empty = total_index / weight_sum;
+        total_index = (total_index / 2) % weight_sum;
+
+        for (size_t j = 0; j < k_ - target_buffer_empty; j++) {
             size_t target_rank = GetTargetRank(j, weight_sum);
             ValueType sample;
             bool first = true;
@@ -159,7 +165,8 @@ public:
                 looser_tree.delete_min_insert(
                         level[minimum_index].
                         elements_[positions[minimum_index]],
-                        positions[minimum_index] < k_ - 1);
+                        positions[minimum_index] <
+                        level[minimum_index].elements_.size() - 1);
             }
             buffers_[target_buffer_index].Put(sample);
         }
@@ -215,6 +222,7 @@ private:
             minimum_level_ = 0;
         }
         level_counters_[minimum_level_]++;
+        buffers_[current_buffer_].elements_.reserve(k_);
         buffers_[current_buffer_].weight_ = 1;
         buffers_[current_buffer_].sorted_ = false;
         empty_buffers_--;
