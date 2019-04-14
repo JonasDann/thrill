@@ -1,7 +1,7 @@
 /*******************************************************************************
- * thrill/core/multisequence_selection.hpp
+ * thrill/core/multi_sequence_selection.hpp
  *
- * Distributed, external multisequence selection algorithm
+ * Distributed, external multi sequence selection algorithm
  *
  * Part of Project Thrill - http://project-thrill.org
  *
@@ -12,8 +12,8 @@
  ******************************************************************************/
 
 #pragma once
-#ifndef THRILL_API_MULTISEQUENCE_SELECTION_HEADER
-#define THRILL_API_MULTISEQUENCE_SELECTION_HEADER
+#ifndef THRILL_API_MULTI_SEQUENCE_SELECTION_HEADER
+#define THRILL_API_MULTI_SEQUENCE_SELECTION_HEADER
 
 #include <thrill/api/context.hpp>
 #include <thrill/common/logger.hpp>
@@ -26,16 +26,16 @@
 namespace thrill {
 namespace core {
 
-// TODO Unit Test
 template <typename ValueType_>
-class MultisequenceSelectorSampledFileSequenceAdapter
+class MultiSequenceSelectorSampledFileSequenceAdapter
 {
 public:
     typedef ValueType_ ValueType;
 
-    MultisequenceSelectorSampledFileSequenceAdapter() = default;
+    MultiSequenceSelectorSampledFileSequenceAdapter() = default;
 
-    explicit MultisequenceSelectorSampledFileSequenceAdapter(data::SampledFilePtr<ValueType>& file)
+    explicit MultiSequenceSelectorSampledFileSequenceAdapter(
+            data::SampledFilePtr<ValueType>& file)
         : file_(file)
     {}
 
@@ -49,7 +49,8 @@ public:
     }
 
     template<typename Comparator>
-    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& comparator)
+    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left,
+            size_t right, const Comparator& comparator)
     {
         return file_->GetFastIndexOf(item, tie, left, right, comparator);
     }
@@ -59,13 +60,14 @@ private:
 };
 
 template <typename ValueType_>
-class MultisequenceSelectorVectorSequenceAdapter : public std::vector<ValueType_>
+class MultiSequenceSelectorVectorSequenceAdapter : public std::vector<ValueType_>
 {
 public:
     typedef ValueType_ ValueType;
 
     template<typename Comparator>
-    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left, size_t right, const Comparator& less)
+    size_t GetIndexOf(const ValueType& item, size_t tie, size_t left,
+            size_t right, const Comparator& less)
     {
         static constexpr bool debug = false;
 
@@ -73,9 +75,9 @@ public:
                 std::is_convertible<
                         bool, typename common::FunctionTraits<Comparator>::result_type
                 >::value,
-                "Comperator must return boolean.");
+                "Comparator must return boolean.");
 
-        LOG << "MultisequenceSelectorVectorSequenceAdapter::GetIndexOf() looking for item " << item << " tie " << tie
+        LOG << "MultiSequenceSelectorVectorSequenceAdapter::GetIndexOf() looking for item " << item << " tie " << tie
             << " in range [" << left << "," << right << ") ="
             << " size " << right - left;
 
@@ -85,7 +87,7 @@ public:
 
         // Use a binary search to find the item.
         while (left < right) {
-            size_t mid = (right + left) >> 1;
+            size_t mid = (right + left) >> static_cast<size_t>(1);
             LOG << "left: " << left << "right: " << right << "mid: " << mid;
             ValueType currentItem = std::vector<ValueType>::operator [](mid);
             LOG << "Item at mid: " << currentItem;
@@ -103,7 +105,7 @@ public:
 };
 
 template <typename SequenceAdapterType, typename Comparator>
-class MultisequenceSelector
+class MultiSequenceSelector
 {
     using ValueType = typename SequenceAdapterType::ValueType;
     using SequenceAdapters = typename std::vector<SequenceAdapterType>;
@@ -111,19 +113,19 @@ class MultisequenceSelector
     static constexpr bool debug = false;
     static constexpr bool self_verify = debug && common::g_debug_mode;
 
-    //! Set this variable to true to enable generation and output of merge stats
+    //! Set this variable to true to enable generation and output of selection
+    //! stats
     static constexpr bool stats_enabled = true;
 
 public:
-    MultisequenceSelector(Context& context, const Comparator& comparator)
+    MultiSequenceSelector(Context& context, const Comparator& comparator)
         : context_(context), comparator_(comparator)
     {}
 
     void GetEquallyDistantSplitterRanks(SequenceAdapters& sequences,
-                          std::vector<std::vector<size_t>>& out_local_ranks, size_t splitter_count)
+                          std::vector<std::vector<size_t>>& out_local_ranks,
+                          size_t splitter_count)
     {
-        // *** Setup Environment for merging ***
-
         auto seq_count = sequences.size();
 
         // Count of all local elements.
@@ -180,7 +182,7 @@ public:
                 left(splitter_count, std::vector<size_t>(seq_count)),
                 width(splitter_count, std::vector<size_t>(seq_count));
 
-        // Auxillary array.
+        // Auxiliary array.
         std::vector<Pivot> pivots(splitter_count);
 
         // Initialize all lefts with 0 and all widths with size of their
@@ -276,7 +278,7 @@ private:
         std::stringstream oss;
         for (const Pivot& elem : data) {
             oss << "(" << elem.value
-                << ", itie: " << elem.tie_idx
+                << ", tie_idx: " << elem.tie_idx
                 << ", len: " << elem.segment_len << ") ";
         }
         return oss.str();
@@ -296,8 +298,9 @@ private:
     using StatsTimer = common::StatsTimerBaseStopped<stats_enabled>;
 
     /*!
-     * Stats holds timers for measuring multisequence selection performance, that supports
-     * accumulating the output and printing it to the standard out stream.
+     * Stats holds timers for measuring multi sequence selection performance,
+     * that supports accumulating the output and printing it to the standard
+     * out stream.
      */
     class Stats
     {
@@ -349,7 +352,7 @@ private:
         }
     };
 
-    //! Instance of merge statistics
+    //! Instance of selection statistics
     Stats stats_;
 
     /*!
@@ -495,10 +498,14 @@ private:
                 assert(left[r][s] <= local_rank);
 
                 if (target_ranks[r] > global_ranks[r]) {
+                    // +1 binary search only on worker that pivot is from and
+                    // only on sequence that pivot is from
                     if (pivots[r].worker_rank == context_.my_rank() &&
                         pivots[r].sequence_idx == s) {
-                        LOG << "[" << stats_.iterations_ << "] increment (split: " << r << " seq: " << s << " pivot: " << pivots[r].value << ").";
-                        local_rank++; // +1 binary search only on worker that pivot is from and only on sequence that pivot is from
+                        LOG << "[" << stats_.iterations_
+                            << "] increment (split: " << r << " seq: " << s
+                            << " pivot: " << pivots[r].value << ").";
+                        local_rank++;
                     }
                     width[r][s] -= local_rank - left[r][s];
                     left[r][s] = local_rank;
@@ -520,10 +527,12 @@ private:
 };
 
 template <typename SequenceAdapterType, typename Comparator>
-void run_multisequence_selection(Context& context, const Comparator& comparator,
-        std::vector<SequenceAdapterType>& sequences, std::vector<std::vector<size_t>>& out_local_ranks,
-        size_t splitter_count) {
-    MultisequenceSelector<SequenceAdapterType, Comparator> selector(context, comparator);
+void run_multi_sequence_selection(Context &context,
+                                  const Comparator &comparator,
+                                  std::vector<SequenceAdapterType> &sequences,
+                                  std::vector<std::vector<size_t>> &out_local_ranks,
+                                  size_t splitter_count) {
+    MultiSequenceSelector<SequenceAdapterType, Comparator> selector(context, comparator);
     return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks, splitter_count);
 
 }
@@ -531,6 +540,6 @@ void run_multisequence_selection(Context& context, const Comparator& comparator,
 } // namespace core
 } // namespace thrill
 
-#endif // !THRILL_API_MULTISEQUENCE_SELECTION_HEADER
+#endif // !THRILL_API_MULTI_SEQUENCE_SELECTION_HEADER
 
 /******************************************************************************/
