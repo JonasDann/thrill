@@ -79,7 +79,8 @@ public:
     CanonicalMergeSortNode(const ParentDIA& parent,
              const CompareFunction& compare_function,
              const SortAlgorithm& sort_algorithm = SortAlgorithm())
-        : Super(parent.ctx(), "Canonical Merge Sort", { parent.id() }, { parent.node() }),
+        : Super(parent.ctx(), "Canonical Merge Sort", { parent.id() },
+                { parent.node() }),
           compare_function_(compare_function),
           sort_algorithm_(sort_algorithm),
           parent_stack_empty_(ParentDIA::stack_empty)
@@ -100,7 +101,7 @@ public:
 
     void StartPreOp(size_t /* id */) final {
         timer_total_.Start();
-        timer_preop_.Start();
+        timer_pre_op_.Start();
         current_run_.emplace_back(VectorSequenceAdapter());
         current_run_[0].reserve(run_capacity_);
     }
@@ -137,20 +138,25 @@ public:
         }
         std::vector<ValueType>().swap(current_run_[0]); // free vector
 
-        timer_preop_.Stop();
+        timer_pre_op_.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() preop local_items_", local_items_);
+                    "CanonicalMergeSort() pre op local items", local_items_);
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_preop_", timer_preop_.SecondsDouble());
+                    "CanonicalMergeSort() pre op timer",
+                    timer_pre_op_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_sort_", timer_sort_.SecondsDouble());
+                    "CanonicalMergeSort() pre op sort timer",
+                    timer_sort_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_selection_", timer_preop_selection_.SecondsDouble());
+                    "CanonicalMergeSort() pre op selection timer",
+                    timer_pre_op_selection_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_scatter_", timer_preop_scatter_.SecondsDouble());
+                    "CanonicalMergeSort() pre op scatter timer",
+                    timer_pre_op_scatter_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
+                    "CanonicalMergeSort() pre op merge timer",
+                    timer_merge_.SecondsDouble());
         }
     }
 
@@ -160,17 +166,20 @@ public:
 
     //! Executes the sort operation.
     void Execute() final {
-        Timer timer_mainop;
-        timer_mainop.Start();
+        Timer timer_main_op;
+        timer_main_op.Start();
         MainOp();
-        timer_mainop.Stop();
+        timer_main_op.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_mainop", timer_mainop.SecondsDouble());
+                    "CanonicalMergeSort() main op timer",
+                    timer_main_op.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_selection_", timer_global_selection_.SecondsDouble());
+                    "CanonicalMergeSort() main op selection timer",
+                    timer_global_selection_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_scatter_", timer_global_scatter_.SecondsDouble());
+                    "CanonicalMergeSort() main op scatter timer",
+                    timer_global_scatter_.SecondsDouble());
         }
     }
 
@@ -190,8 +199,8 @@ public:
         /* Phase 3 { */
         LOG << "Phase 3.";
 
-        Timer timer_pushdata;
-        timer_pushdata.Start();
+        Timer timer_push_data;
+        timer_push_data.Start();
 
         size_t local_size = 0;
         if (final_run_files_.size() == 0) {
@@ -204,22 +213,27 @@ public:
         else {
             size_t merge_degree, prefetch;
             std::tie(merge_degree, prefetch) =
-                    context_.block_pool().MaxMergeDegreePrefetch(final_run_files_.size());
+                    context_.block_pool().MaxMergeDegreePrefetch(
+                            final_run_files_.size());
 
             std::vector<data::File::Reader> file_readers;
             for (size_t i = 0; i < final_run_files_.size(); i++) {
-                LOG << "Run file " << i << " has size " << final_run_files_[i]->num_items();
-                file_readers.emplace_back(final_run_files_[i]->GetReader(consume, /* prefetch */ 0));
+                LOG << "Run file " << i << " has size "
+                    << final_run_files_[i]->num_items();
+                file_readers.emplace_back(final_run_files_[i]->GetReader(
+                        consume, /* prefetch */ 0));
             }
 
             StartPrefetch(file_readers, prefetch);
 
             LOG << "Building merge tree.";
             auto file_merge_tree = core::make_multiway_merge_tree<ValueType>(
-                    file_readers.begin(), file_readers.end(), compare_function_);
+                    file_readers.begin(), file_readers.end(),
+                    compare_function_);
 
 
-            LOG << "Merging " << final_run_files_.size() << " files with prefetch " << prefetch << ".";
+            LOG << "Merging " << final_run_files_.size()
+                << " files with prefetch " << prefetch << ".";
             timer_merge_.Start();
             ValueType first_element;
             if (debug && file_merge_tree.HasNext()) {
@@ -241,35 +255,46 @@ public:
                 << ", last element: " << last_element << ").";
         }
 
-        timer_pushdata.Stop();
+        timer_push_data.Stop();
         timer_total_.Stop();
 
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() local_size", local_size);
+                    "CanonicalMergeSort() push data local items", local_size);
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_pushdata", timer_pushdata.SecondsDouble());
+                    "CanonicalMergeSort() push data timer",
+                    timer_push_data.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                "CanonicalMergeSort() timer_merge_", timer_merge_.SecondsDouble());
+                    "CanonicalMergeSort() push data merge timer",
+                    timer_merge_.SecondsDouble());
             size_t p = context_.num_workers();
-            size_t total_time = context_.net.AllReduce(timer_total_.Milliseconds()) / p;
-            double sort = (double) context_.net.AllReduce(timer_sort_.Milliseconds()) / p;
-            double preop_scatter = (double) context_.net.AllReduce(timer_preop_scatter_.Milliseconds()) / p;
-            double merge = (double) context_.net.AllReduce(timer_merge_.Milliseconds()) / p;
-            double preop_selection = (double) context_.net.AllReduce(timer_preop_selection_.Milliseconds()) / p;
-            double run_formation = (double) context_.net.AllReduce(timer_preop_.Milliseconds()) / p;
-            double global_selection = (double) context_.net.AllReduce(timer_global_selection_.Milliseconds()) / p;
-            double global_scatter = (double) context_.net.AllReduce(timer_global_scatter_.Milliseconds()) / p;
-            double final_merge = (double) context_.net.AllReduce(timer_pushdata.Milliseconds()) / p;
-            double other = total_time - sort - preop_scatter - global_scatter -
-                    merge - preop_selection - global_selection;
+            size_t total_time = context_.net.AllReduce(
+                    timer_total_.Milliseconds()) / p;
+            double sort = (double) context_.net.AllReduce(
+                    timer_sort_.Milliseconds()) / p;
+            double pre_op_scatter = (double) context_.net.AllReduce(
+                    timer_pre_op_scatter_.Milliseconds()) / p;
+            double merge = (double) context_.net.AllReduce(
+                    timer_merge_.Milliseconds()) / p;
+            double pre_op_selection = (double) context_.net.AllReduce(
+                    timer_pre_op_selection_.Milliseconds()) / p;
+            double run_formation = (double) context_.net.AllReduce(
+                    timer_pre_op_.Milliseconds()) / p;
+            double global_selection = (double) context_.net.AllReduce(
+                    timer_global_selection_.Milliseconds()) / p;
+            double global_scatter = (double) context_.net.AllReduce(
+                    timer_global_scatter_.Milliseconds()) / p;
+            double final_merge = (double) context_.net.AllReduce(
+                    timer_push_data.Milliseconds()) / p;
+            double other = total_time - sort - pre_op_scatter - global_scatter -
+                    merge - pre_op_selection - global_selection;
             size_t result_size = context_.net.AllReduce(local_size);
             if (context_.my_rank() == 0) {
                 LOG1 << "RESULT " << "operation=canonical_merge_sort"
                      << " total_time=" << total_time << " sort=" << sort
                      << " merge=" << merge
-                     << " communication=" << preop_scatter + global_scatter
-                     << " selection=" << preop_selection + global_selection
+                     << " communication=" << pre_op_scatter + global_scatter
+                     << " selection=" << pre_op_selection + global_selection
                      << " other=" << other << " run_formation=" << run_formation
                      << " global_selection=" << global_selection
                      << " global_scatter=" << global_scatter
@@ -289,8 +314,10 @@ public:
 private:
     size_t p_;
 
-    using VectorSequenceAdapter = core::MultiSequenceSelectorVectorSequenceAdapter<ValueType>;
-    using FileSequenceAdapter = core::MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>;
+    using VectorSequenceAdapter =
+            core::MultiSequenceSelectorVectorSequenceAdapter<ValueType>;
+    using FileSequenceAdapter =
+            core::MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>;
 
     using LocalRanks = std::vector<std::vector<size_t>>;
 
@@ -306,7 +333,8 @@ private:
     //! \name PreOp Phase
     //! \{
 
-    //! Current run data (in a vector so it does not have to be reallocated when passing to run_multisequence...)
+    //! Current run data (in a vector so it does not have to be reallocated when
+    //! passing to run_multi_sequence...)
     std::vector<VectorSequenceAdapter> current_run_;
     //! Runs in the first phase of the algorithm
     std::vector<data::SampledFilePtr<ValueType>> run_files_;
@@ -325,19 +353,19 @@ private:
     //! \{
 
     //! time spent in PreOp (including preceding Node's computation)
-    Timer timer_preop_;
+    Timer timer_pre_op_;
 
     //! time spent in sort()
     Timer timer_sort_;
 
-    //! time spent preop in multisequence selection
-    Timer timer_preop_selection_;
+    //! time spent pre op in multi sequence selection
+    Timer timer_pre_op_selection_;
 
-    //! time spent global in multisequence selection
+    //! time spent global in multi sequence selection
     Timer timer_global_selection_;
 
-    //! time spent preop in communication
-    Timer timer_preop_scatter_;
+    //! time spent pre op in communication
+    Timer timer_pre_op_scatter_;
 
     //! time spent global in communication
     Timer timer_global_scatter_;
@@ -381,55 +409,61 @@ private:
         LOG << "Phase 1.";
         LOG << "Sort run locally.";
         timer_sort_.Start();
-        sort_algorithm_(current_run_[0].begin(), current_run_[0].end(), compare_function_);
+        sort_algorithm_(current_run_[0].begin(), current_run_[0].end(),
+                compare_function_);
         timer_sort_.Stop();
 
-        // Calculate Splitters
+        // Calculate splitters
         auto splitter_count = p_ - 1;
         LOG << "Calculating " << splitter_count << " splitters.";
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(1));
         // TODO What to do when some PEs do not get the same amount of runs.
         //      (Dummy runs so every PE creates same amount of streams)
-        timer_preop_selection_.Start();
-        core::run_multi_sequence_selection<VectorSequenceAdapter, CompareFunction>
-                (context_, compare_function_, current_run_, local_ranks,
-                 splitter_count);
-        timer_preop_selection_.Stop();
+        timer_pre_op_selection_.Start();
+        core::run_multi_sequence_selection<VectorSequenceAdapter,
+        CompareFunction> (
+                context_, compare_function_, current_run_, local_ranks,
+                splitter_count);
+        timer_pre_op_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;
 
-        // Redistribute Elements
-        auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
+        // Redistribute elements
+        auto data_stream =
+                context_.template GetNewStream<data::CatStream>(this->dia_id());
         auto data_writers = data_stream->GetWriters();
         auto data_readers = data_stream->GetReaders();
 
         // Construct offsets vector
         std::vector<size_t> offsets(splitter_count + 1);
-        std::transform(local_ranks.begin(), local_ranks.end(), offsets.begin(), [](std::vector<size_t> element) {
+        std::transform(local_ranks.begin(), local_ranks.end(), offsets.begin(),
+                [](std::vector<size_t> element) {
             return element[0];
         });
         offsets[splitter_count] = current_run_[0].size();
 
         LOG << "Scatter current run.";
-        timer_preop_scatter_.Start();
+        timer_pre_op_scatter_.Start();
         ScatterRun(current_run_[0], data_writers, offsets);
-        timer_preop_scatter_.Stop();
+        timer_pre_op_scatter_.Stop();
         current_run_[0].clear();
 
         LOG << "Building merge tree.";
-        auto multiway_merge_tree = core::make_multiway_merge_tree<ValueType>(
+        auto multi_way_merge_tree = core::make_multiway_merge_tree<ValueType>(
                 data_readers.begin(), data_readers.end(), compare_function_);
 
         LOG << "Merging into run file.";
-        run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(this));
+        run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(
+                this));
         auto current_run_file_writer = run_files_.back()->GetWriter();
         timer_merge_.Start();
-        while (multiway_merge_tree.HasNext()) {
-            auto next = multiway_merge_tree.Next();
+        while (multi_way_merge_tree.HasNext()) {
+            auto next = multi_way_merge_tree.Next();
             current_run_file_writer.template Put<ValueType>(next);
         }
         timer_merge_.Stop();
         current_run_file_writer.Close();
-        LOG << "Finished run has " << run_files_.back()->num_items() << " elements.";
+        LOG << "Finished run has " << run_files_.back()->num_items()
+            << " elements.";
 
         data_stream.reset();
         /* } Phase 1 */
@@ -438,7 +472,7 @@ private:
     void MainOp() {
         /* Phase 2 { */
         LOG << "Phase 2.";
-        // Calculate Splitters
+        // Calculate splitters
         auto splitter_count = p_ - 1;
         auto run_count = run_files_.size();
         LOG << "Calculating " << splitter_count << " splitters.";
@@ -454,19 +488,23 @@ private:
         timer_global_selection_.Stop();
         LOG0 << "Local splitters: " << local_ranks;
 
-        // Redistribute Elements
+        // Redistribute elements
         LOG << "Scatter " << run_count << " run files.";
 
         for (size_t run_index = 0; run_index < run_count; run_index++) {
-            auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
+            auto data_stream = context_.template GetNewStream<data::CatStream>(
+                    this->dia_id());
 
             // Construct offsets vector
             std::vector<size_t> run_offsets(splitter_count + 2);
             run_offsets[0] = 0;
-            std::transform(local_ranks.begin(), local_ranks.end(), run_offsets.begin() + 1, [run_index](std::vector<size_t> element) {
+            std::transform(local_ranks.begin(), local_ranks.end(),
+                    run_offsets.begin() + 1,
+                    [run_index](std::vector<size_t> element) {
                 return element[run_index];
             });
-            run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
+            run_offsets[splitter_count + 1] =
+                    run_files_[run_index]->num_items();
             LOG << "Offsets[" << run_index << "]: " << run_offsets;
             LOG << run_offsets[context_.my_rank() + 1] -
             run_offsets[context_.my_rank()] << " / " <<
@@ -498,7 +536,8 @@ public:
 
 template <typename ValueType, typename Stack>
 template <typename CompareFunction>
-auto DIA<ValueType, Stack>::CanonicalMergeSort(const CompareFunction& compare_function) const {
+auto DIA<ValueType, Stack>::CanonicalMergeSort(
+        const CompareFunction& compare_function) const {
     assert(IsValid());
 
     using CanonicalMergeSortNode = api::CanonicalMergeSortNode<
@@ -522,7 +561,8 @@ auto DIA<ValueType, Stack>::CanonicalMergeSort(const CompareFunction& compare_fu
             bool>::value,
         "CompareFunction has the wrong output type (should be bool)");
 
-    auto node = tlx::make_counting<CanonicalMergeSortNode>(*this, compare_function);
+    auto node =
+            tlx::make_counting<CanonicalMergeSortNode>(*this, compare_function);
 
     return DIA<ValueType>(node);
 }
