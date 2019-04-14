@@ -19,6 +19,18 @@
 namespace thrill {
 namespace core {
 
+/*!
+ * A data structure that deterministically draws equidistant samples from a
+ * stream of elements.
+ *
+ * \tparam ValueType Type of elements
+ *
+ * \tparam Comparator Type of the comparator
+ *
+ * \tparam SortAlgorithm Type of the local sort function
+ *
+ * \tparam Stable Whether or not to use stable sorting mechanisms
+ */
 template <
         typename ValueType,
         typename Comparator,
@@ -57,6 +69,15 @@ class OnlineSampler {
     };
 
 public:
+    /*!
+     * Online sampler constructor. The parameters b and k influence the
+     * precision of the samples. In general, higher values of b and k result
+     * in more precision.
+     *
+     * \param b Number of buffers used while sampling
+     *
+     * \param k Number of elements in each buffer
+     */
     OnlineSampler(size_t b, size_t k, Context& context,
             const Comparator& comparator, const SortAlgorithm& sort_algorithm)
             : b_(b), k_(k), context_(context), comparator_(comparator),
@@ -66,6 +87,12 @@ public:
         level_counters_.emplace_back(0);
     }
 
+    /*!
+     * Put an element into the data structure. If this returns false, Collapse
+     * has to be called.
+     *
+     * \returns True if the data structure still has capacity for more elements
+     */
     bool Put(ValueType value) {
         if (current_buffer_ == -1 || !buffers_[current_buffer_].HasCapacity()) {
             New();
@@ -73,11 +100,22 @@ public:
         return buffers_[current_buffer_].Put(value) || empty_buffers_ > 0;
     }
 
+    /*!
+     * Put an element into the data structure.
+     *
+     * \tparam Emitter Type of emitter function that is called with elements
+     *  that are no longer in the buffers after collapse operation
+     *
+     * \param emit Emitter function void emit(ValueType element)
+     *
+     * \returns True if there is more than one buffer remaining
+     */
     template <typename Emitter>
     bool Collapse(const Emitter& emit) {
         LooserTree looser_tree(level_counters_[minimum_level_], comparator_);
         std::vector<Buffer> level;
-        auto level_begin = b_ - empty_buffers_ - level_counters_[minimum_level_];
+        auto level_begin = b_ - empty_buffers_ -
+                level_counters_[minimum_level_];
         auto element_count = 0;
         for (size_t i = level_begin; i < b_ - empty_buffers_; i++) {
             level.emplace_back(std::move(buffers_[i]));
@@ -101,6 +139,8 @@ public:
 
         size_t total_index = 0;
         std::vector<size_t> positions(level.size(), 0);
+        // TODO Handle non full buffers, by advancing total_index and positions
+        //  in advance
         for (int j = 0; j < k_; j++) {
             size_t target_rank = GetTargetRank(j, weight_sum);
             ValueType sample;
@@ -112,11 +152,13 @@ public:
                 } else {
                     emit(sample);
                 }
-                sample = level[minimum_index].elements_[positions[minimum_index]];
+                sample = level[minimum_index].
+                        elements_[positions[minimum_index]];
                 total_index += level[minimum_index].weight_;
                 positions[minimum_index]++;
                 looser_tree.delete_min_insert(
-                        level[minimum_index].elements_[positions[minimum_index]],
+                        level[minimum_index].
+                        elements_[positions[minimum_index]],
                         positions[minimum_index] < k_ - 1);
             }
             buffers_[target_buffer_index].Put(sample);
@@ -137,8 +179,17 @@ public:
         return b_ - empty_buffers_ > 1;
     }
 
-    // TODO pseudo concat to use all knowledge in the buffers?
+    /*!
+     * Communicates currently highest weighted samples buffer with all PEs and
+     * returns collapsed result.
+     *
+     * \param out_samples Vector that will contain the resulting samples
+     *
+     * \returns Weight of elements
+     */
     size_t GetSamples(std::vector<ValueType> &out_samples) {
+        // TODO Pseudo concat to use all knowledge in the buffers?
+        // TODO AllGather samples
         out_samples = buffers_[0].elements_;
         return buffers_[0].weight_;
     }
