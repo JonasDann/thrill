@@ -81,7 +81,8 @@ public:
              const SortAlgorithm& sort_algorithm = SortAlgorithm())
         : Super(parent.ctx(), "Canonical Merge Sort", { parent.id() }, { parent.node() }),
           compare_function_(compare_function),
-          sort_algorithm_(sort_algorithm)
+          sort_algorithm_(sort_algorithm),
+          parent_stack_empty_(ParentDIA::stack_empty)
     {
         // Hook PreOp(s)
         auto pre_op_fn = [this](const ValueType& input) {
@@ -114,10 +115,20 @@ public:
 
     //! Receive a whole data::File of ValueType, but only if our stack is empty.
     bool OnPreOpFile(const data::File& file, size_t /* parent_index */) final {
-        (void) file;
-        // TODO What should this do?
+        if (!parent_stack_empty_) {
+            LOGC(common::g_debug_push_file)
+            << "CanonicalMergeSort rejected File from parent "
+            << "due to non-empty function stack.";
+            return false;
+        }
 
-        return false;
+        // accept file
+        auto reader = file.Copy().GetConsumeReader();
+        while (reader.HasNext()) {
+            PreOp(reader.template Next<ValueType>());
+        }
+
+        return true;
     }
 
     void StopPreOp(size_t /* id */) final {
@@ -163,10 +174,16 @@ public:
         }
     }
 
+    //! Communicates how much memory the DIA needs on push data
     DIAMemUse PushDataMemUse() final {
-        // Communicates how much memory the DIA needs on push data
-        // TODO Make it work.
-        return 0;
+        if (final_run_files_.size() <= 1) {
+            // direct push, no merge necessary
+            return 0;
+        }
+        else {
+            // need to perform multi way merging
+            return DIAMemUse::Max();
+        }
     }
 
     void PushData(bool consume) final {
@@ -265,7 +282,8 @@ public:
     }
 
     void Dispose() final {
-        // TODO This may need to do something.
+        run_files_.clear();
+        final_run_files_.clear();
     }
 
 private:
@@ -281,6 +299,9 @@ private:
 
     //! Sort function class
     SortAlgorithm sort_algorithm_;
+
+    //! Whether the parent stack is empty
+    const bool parent_stack_empty_;
 
     //! \name PreOp Phase
     //! \{
@@ -367,7 +388,8 @@ private:
         auto splitter_count = p_ - 1;
         LOG << "Calculating " << splitter_count << " splitters.";
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(1));
-        // TODO What to do when some PEs do not get the same amount of runs. (Dummy runs so every PE creates same amount of streams)
+        // TODO What to do when some PEs do not get the same amount of runs.
+        //      (Dummy runs so every PE creates same amount of streams)
         timer_preop_selection_.Start();
         core::run_multi_sequence_selection<VectorSequenceAdapter, CompareFunction>
                 (context_, compare_function_, current_run_, local_ranks,
