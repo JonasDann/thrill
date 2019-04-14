@@ -148,6 +148,7 @@ thrill_build_test(core/reduce_post_phase_test)
 thrill_build_test(core/reduce_pre_phase_test)
 thrill_build_test(core/multiway_merge_test)
 thrill_build_test(core/multi_sequence_selection_test)
+thrill_build_test(core/online_sampler_test)
 
 thrill_build_test(api/groupby_node_test)
 thrill_build_test(api/hyperloglog_test)

@@ -16,6 +16,8 @@
 
 #include <tlx/container/loser_tree.hpp>
 
+#include <thrill/api/context.hpp>
+
 namespace thrill {
 namespace core {
 
@@ -79,7 +81,7 @@ public:
     OnlineSampler(size_t b, size_t k, Context& context,
             const Comparator& comparator, const SortAlgorithm& sort_algorithm)
             : b_(b), k_(k), context_(context), comparator_(comparator),
-              sort_algorithm_(sort_algorithm), current_buffer_(-1),
+              sort_algorithm_(sort_algorithm), current_buffer_(b),
               empty_buffers_(b), minimum_level_(0) {
         buffers_ = std::vector<Buffer>(b, Buffer(k));
         level_counters_.emplace_back(0);
@@ -92,7 +94,8 @@ public:
      * \returns True if the data structure still has capacity for more elements
      */
     bool Put(ValueType value) {
-        if (current_buffer_ == -1 || !buffers_[current_buffer_].HasCapacity()) {
+        if (current_buffer_ >= b_ ||
+                !buffers_[current_buffer_].HasCapacity()) {
             New();
         }
         return buffers_[current_buffer_].Put(value) || empty_buffers_ > 0;
@@ -127,7 +130,7 @@ public:
                 level[i].sorted_ = true;
             }
             weight_sum += level[i].weight_;
-            looser_tree.insert_start(level[i].elements_[0], i, false);
+            looser_tree.insert_start(&level[i].elements_[0], i, false);
         }
         looser_tree.init();
 
@@ -151,6 +154,7 @@ public:
             size_t target_rank = GetTargetRank(j, weight_sum);
             ValueType sample;
             bool first = true;
+            assert(total_index < target_rank);
             while (total_index < target_rank) {
                 auto minimum_index = looser_tree.min_source();
                 if (first) {
@@ -162,18 +166,19 @@ public:
                         elements_[positions[minimum_index]];
                 total_index += level[minimum_index].weight_;
                 positions[minimum_index]++;
+                auto has_next = positions[minimum_index] <
+                                level[minimum_index].elements_.size();
                 looser_tree.delete_min_insert(
-                        level[minimum_index].
-                        elements_[positions[minimum_index]],
-                        positions[minimum_index] <
-                        level[minimum_index].elements_.size() - 1);
+                        has_next ? &level[minimum_index].
+                        elements_[positions[minimum_index]] : nullptr,
+                        !has_next);
             }
             buffers_[target_buffer_index].Put(sample);
         }
 
         empty_buffers_ += level.size() - 1;
         level_counters_[minimum_level_] = 0;
-        current_buffer_ = -1;
+        current_buffer_ = b_;
 
         minimum_level_++;
         if (minimum_level_ >= level_counters_.size()) {
