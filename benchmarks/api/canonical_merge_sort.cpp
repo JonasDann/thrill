@@ -1,5 +1,5 @@
 /*******************************************************************************
- * benchmarks/api/cms_sort.cpp
+ * benchmarks/api/canonical_merge_sort.cpp
  *
  * Part of Project Thrill - http://project-thrill.org
  *
@@ -28,18 +28,18 @@ struct Record {
     uint64_t key;
     uint64_t value;
 
-    bool operator < (const Record& b) const {
+    bool operator<(const Record &b) const {
         return key < b.key;
     }
 
-    friend std ::ostream& operator << (std::ostream& os, const Record& r) {
+    friend std::ostream &operator<<(std::ostream &os, const Record &r) {
         return os << r.key << r.value;
     }
 } TLX_ATTRIBUTE_PACKED;
 
 constexpr bool self_verify = false;
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
 
     tlx::CmdlineParser clp;
 
@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
     uint64_t size;
 
     clp.add_param_bytes("size", size,
-                        "Amount of data transfered between peers (example: 1 GiB).");
+                        "Amount of data transferred between peers (example: 1 GiB).");
 
     if (!clp.process(argc, argv)) {
         return -1;
@@ -58,10 +58,12 @@ int main(int argc, char* argv[]) {
     clp.print_result();
 
     api::Run(
-            [&iterations, &size](api::Context& ctx) {
+            [&iterations, &size](api::Context &ctx) {
                 for (int i = 0; i < iterations; i++) {
-                    std::default_random_engine generator(std::random_device {} ());
-                    std::uniform_int_distribution<uint64_t> distribution(0, std::numeric_limits<uint64_t>::max());
+                    std::default_random_engine generator(
+                            std::random_device{}());
+                    std::uniform_int_distribution<uint64_t> distribution(
+                            0, std::numeric_limits<uint64_t>::max());
 
                     common::StatsTimerStart timer;
                     auto sorted = api::Generate(
@@ -82,7 +84,8 @@ int main(int argc, char* argv[]) {
                     }
                     timer.Stop();
                     if (!ctx.my_rank()) {
-                        LOG1 << "ITERATION " << i << " RESULT" << " time=" << timer;
+                        LOG1 << "ITERATION " << i << " RESULT" << " time="
+                             << timer;
                     }
                 }
             });
