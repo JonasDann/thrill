@@ -23,7 +23,7 @@
 #include <thrill/common/stats_timer.hpp>
 #include <thrill/common/string.hpp>
 #include <thrill/core/multiway_merge.hpp>
-#include <thrill/core/multisequence_selection.hpp>
+#include <thrill/core/multi_sequence_selection.hpp>
 #include <thrill/data/dyn_block_reader.hpp>
 #include <thrill/data/file.hpp>
 
@@ -267,7 +267,7 @@ private:
         for (size_t i = 0; i < kNumInputs; i++)
             sequences[i] = FileSequenceAdapter(files_[i]);
 
-        core::run_multisequence_selection<FileSequenceAdapter, Comparator>
+        core::run_multi_sequence_selection<FileSequenceAdapter, Comparator>
                 (context_, comparator_, sequences, &local_ranks, p - 1);
 
         LOG << "Creating channels";

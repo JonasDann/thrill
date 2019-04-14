@@ -19,7 +19,7 @@
 #include <thrill/common/math.hpp>
 #include <thrill/common/porting.hpp>
 #include <thrill/common/qsort.hpp>
-#include <thrill/core/multisequence_selection.hpp>
+#include <thrill/core/multi_sequence_selection.hpp>
 #include <thrill/core/multiway_merge.hpp>
 #include <thrill/data/sampled_file.hpp>
 #include <thrill/data/block_reader.hpp>
@@ -271,8 +271,8 @@ public:
 private:
     size_t p_;
 
-    using VectorSequenceAdapter = core::MultisequenceSelectorVectorSequenceAdapter<ValueType>;
-    using FileSequenceAdapter = core::MultisequenceSelectorSampledFileSequenceAdapter<ValueType>;
+    using VectorSequenceAdapter = core::MultiSequenceSelectorVectorSequenceAdapter<ValueType>;
+    using FileSequenceAdapter = core::MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>;
 
     using LocalRanks = std::vector<std::vector<size_t>>;
 
@@ -369,9 +369,9 @@ private:
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(1));
         // TODO What to do when some PEs do not get the same amount of runs. (Dummy runs so every PE creates same amount of streams)
         timer_preop_selection_.Start();
-        core::run_multisequence_selection<VectorSequenceAdapter, CompareFunction>
+        core::run_multi_sequence_selection<VectorSequenceAdapter, CompareFunction>
                 (context_, compare_function_, current_run_, local_ranks,
-                        splitter_count);
+                 splitter_count);
         timer_preop_selection_.Stop();
         LOG << "Local splitters: " << local_ranks;
 
@@ -426,9 +426,9 @@ private:
             run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
         }
         timer_global_selection_.Start();
-        core::run_multisequence_selection<FileSequenceAdapter, CompareFunction>
+        core::run_multi_sequence_selection<FileSequenceAdapter, CompareFunction>
                 (context_, compare_function_, run_file_adapters, local_ranks,
-                        splitter_count);
+                 splitter_count);
         timer_global_selection_.Stop();
         LOG0 << "Local splitters: " << local_ranks;
 
