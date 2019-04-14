@@ -45,7 +45,7 @@ double calculate_error(std::vector<ValueType> sequence, std::vector<ValueType>&
     return error / k / N;
 }
 
-TEST(OnlineSampler, IntUniFullLocalSortedBufferSampling) {
+TEST(OnlineSampler, IntUniFullSortedBufferSampling) {
     auto test_lambda = [](Context& context) {
         auto comparator = Comparator();
         DefaultSortAlgorithm sort_algorithm;
@@ -88,10 +88,15 @@ TEST(OnlineSampler, IntUniFullLocalSortedBufferSampling) {
             collapsible = sampler.Collapse(emit);
         } while (collapsible);
 
+        auto global_sequence = context.net.AllReduce(sequence,
+                common::VectorConcat<int>());
+
+        std::sort(global_sequence.begin(), global_sequence.end(), comparator);
+
         std::vector<int> samples;
         sampler.GetSamples(samples);
 
-        auto error = calculate_error(sequence, samples);
+        auto error = calculate_error(global_sequence, samples);
 
         ASSERT_GT(0.001, error);
     };
