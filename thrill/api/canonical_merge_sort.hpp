@@ -170,6 +170,7 @@ public:
     }
 
     void PushData(bool consume) final {
+        // TODO Partial multi way merge, when there are too many runs
         /* Phase 3 { */
         LOG << "Phase 3.";
 

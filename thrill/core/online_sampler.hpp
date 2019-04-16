@@ -97,8 +97,9 @@ public:
      * has to be called.
      *
      * \returns True if the data structure still has capacity for more elements
+     *  after Put operation
      */
-    bool Put(ValueType value) {
+    bool Put(ValueType& value) {
         if (current_buffer_ >= b_ ||
                 !buffers_[current_buffer_].HasCapacity()) {
             New();
@@ -169,7 +170,7 @@ public:
         Buffer target_buffer(k_);
         Collapse(buffers, target_buffer, [] (ValueType){});
 
-        out_samples = target_buffer.elements_;
+        out_samples = std::move(target_buffer.elements_);
         return target_buffer.weight_;
     }
 
