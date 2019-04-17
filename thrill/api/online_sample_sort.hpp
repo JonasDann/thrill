@@ -59,7 +59,7 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
     using LocalRanks = std::vector<std::vector<size_t>>;
 
     const size_t b_ = 10;
-    const size_t k_ = 6000; // TODO round k_ up to multiple of p_?
+    const size_t k_ = 3000; // TODO round k_ up to multiple of p_?
     size_t run_capacity_;
 
 public:
@@ -178,6 +178,7 @@ public:
             context_.PrintCollectiveMeanStdev(
                     "OnlineSampleSort() pre op file io timer",
                     timer_pre_op_file_io_.SecondsDouble());
+            sampler_.PrintStats();
         }
     }
 
