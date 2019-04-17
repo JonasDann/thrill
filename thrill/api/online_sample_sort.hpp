@@ -15,6 +15,8 @@
 #include <thrill/api/dia.hpp>
 #include <thrill/api/dop_node.hpp>
 #include <thrill/core/online_sampler.hpp>
+#include <thrill/core/multi_sequence_selection.hpp>
+#include <thrill/core/multiway_merge.hpp>
 
 namespace thrill {
 namespace api {
@@ -50,9 +52,11 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
     using Timer = common::StatsTimerBaseStopped<stats_enabled>;
 
     using SampleIndexPair = std::pair<ValueType, size_t>;
+    using LocalRanks = std::vector<std::vector<size_t>>;
+    using FileSequenceAdapter = core::MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>;
 
     const size_t b_ = 10;
-    const size_t k_ = 60;
+    const size_t k_ = 60; // TODO round k_ up to multiple of p_?
     size_t run_capacity_;
 
 public:
@@ -127,17 +131,48 @@ public:
         return DIAMemUse::Max();
     }
 
-    //! Executes the sort operation.
     void Execute() final {
-        Timer timer_mainop;
-        timer_mainop.Start();
+        Timer timer_main_op;
+        timer_main_op.Start();
 
-        // TODO MainOp
+        // Calculate splitters
+        auto splitter_count = p_ - 1;
+        auto run_count = run_files_.size();
+        LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
+        std::vector<FileSequenceAdapter> run_file_adapters(run_count);
+        for (size_t i = 0; i < run_count; i++) {
+            run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
+        }
+        core::run_multi_sequence_selection<FileSequenceAdapter, Comparator>
+                (context_, comparator_, run_file_adapters, local_ranks,
+                 splitter_count);
 
-        timer_mainop.Stop();
+        // Redistribute Elements
+        for (size_t run_index = 0; run_index < run_count; run_index++) {
+            auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
+
+            // Construct offsets vector
+            std::vector<size_t> run_offsets(splitter_count + 2);
+            run_offsets[0] = 0;
+            std::transform(local_ranks.begin(), local_ranks.end(), run_offsets.begin() + 1, [run_index](std::vector<size_t> element) {
+                return element[run_index];
+            });
+            run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
+
+            data_stream->template Scatter<ValueType>(*run_files_[run_index],
+                                                     run_offsets, true);
+
+            auto final_run_file = context_.GetFilePtr(this);
+            final_run_files_.emplace_back(final_run_file);
+            data_stream->GetFile(final_run_file);
+
+            data_stream.reset();
+        }
+
+        timer_main_op.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "CanonicalMergeSort() timer_mainop", timer_mainop.SecondsDouble());
+                    "CanonicalMergeSort() timer_mainop", timer_main_op.SecondsDouble());
         }
     }
 
@@ -148,7 +183,51 @@ public:
     }
 
     void PushData(bool consume) final {
+        size_t local_size = 0;
+        if (final_run_files_.size() == 0) {
+            // nothing to push
+        }
+        else if (final_run_files_.size() == 1) {
+            local_size = final_run_files_[0]->num_items();
+            this->PushFile(*(final_run_files_[0]), consume);
+        }
+        else {
+            size_t merge_degree, prefetch;
+            std::tie(merge_degree, prefetch) =
+                    context_.block_pool().MaxMergeDegreePrefetch(final_run_files_.size());
 
+            std::vector<data::File::Reader> file_readers;
+            for (size_t i = 0; i < final_run_files_.size(); i++) {
+                LOG << "Run file " << i << " has size " << final_run_files_[i]->num_items();
+                file_readers.emplace_back(final_run_files_[i]->GetReader(consume, /* prefetch */ 0));
+            }
+
+            StartPrefetch(file_readers, prefetch);
+
+            LOG << "Building merge tree.";
+            auto file_merge_tree = core::make_multiway_merge_tree<ValueType>(
+                    file_readers.begin(), file_readers.end(), comparator_);
+
+
+            LOG << "Merging " << final_run_files_.size() << " files with prefetch " << prefetch << ".";
+            ValueType first_element;
+            if (debug && file_merge_tree.HasNext()) {
+                first_element = file_merge_tree.Next();
+                this->PushItem(first_element);
+                local_size++;
+            }
+            ValueType last_element;
+            while (file_merge_tree.HasNext()) {
+                auto next = file_merge_tree.Next();
+                this->PushItem(next);
+                if (debug) {
+                    last_element = next;
+                }
+                local_size++;
+            }
+            LOG << "Finished merging (first element: " << first_element
+                << ", last element: " << last_element << ").";
+        }
     }
 
     void Dispose() final {
@@ -172,6 +251,8 @@ private:
     //! Current run values that are partitioned, redistributed and sorted when
     //! capacity is reached
     std::vector<ValueType> current_run_;
+    //! Runs in the first phase of the algorithm
+    std::vector<data::SampledFilePtr<ValueType>> run_files_;
     //! Number of items on this worker
     size_t local_items_ = 0;
 
@@ -180,7 +261,8 @@ private:
     //! \name MainOp and PushData
     //! \{
 
-
+    //! Runs that are split up perfectly, just need to be merged
+    std::vector<data::FilePtr> final_run_files_;
 
     //! \}
 
@@ -347,7 +429,6 @@ private:
         std::vector<ValueType> splitters;
         splitters.reserve(p_);
         for (size_t i = 0; i < k_; i += k_ / p_) {
-            // TODO Replace with better splitter selection?
             splitters.emplace_back(samples[i]);
         }
 
@@ -361,6 +442,7 @@ private:
             splitters.push_back(splitters.back());
         }
 
+        // Build tree
         TreeBuilder(tree.data(),
                     splitters.data(),
                     splitters.size());
@@ -369,9 +451,24 @@ private:
         auto data_stream = context_.template GetNewStream<data::MixStream>(this->dia_id());
         TransmitItems(tree.data(), tree_size, log_tree_size, p_,
                 splitters.data(), data_stream);
+        current_run_.clear();
 
-        // TODO Receive elements
-        // TODO Sort
+        // Receive elements and sort
+        auto reader = data_stream->GetReader(true);
+        while (reader.HasNext()) {
+            current_run_.emplace_back(reader.Next());
+        }
+        sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
+
+        // Write elements to file
+        run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(this));
+        auto current_run_file_writer = run_files_.back()->GetWriter();
+        for (auto element : current_run_) {
+            current_run_file_writer.template Put<ValueType>(element);
+        }
+        current_run_file_writer.Close();
+
+        data_stream.reset();
     }
 };
 
