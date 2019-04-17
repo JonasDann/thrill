@@ -15,7 +15,6 @@
 #include <thrill/api/dia.hpp>
 #include <thrill/api/dop_node.hpp>
 #include <thrill/core/online_sampler.hpp>
-#include <thrill/core/multi_sequence_selection.hpp>
 #include <thrill/core/multiway_merge.hpp>
 #include <thrill/data/sampled_file.hpp>
 
@@ -45,7 +44,7 @@ template <
 class OnlineSampleSortNode final : public DOpNode<ValueType>
 {
     // TODO Unit test
-    static constexpr bool debug = false;
+    static constexpr bool debug = true;
 
     //! Set this variable to true to enable generation and output of stats
     static constexpr bool stats_enabled = true;
@@ -58,7 +57,6 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
 
     using SampleIndexPair = std::pair<ValueType, size_t>;
     using LocalRanks = std::vector<std::vector<size_t>>;
-    using FileSequenceAdapter = core::MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>;
 
     const size_t b_ = 10;
     const size_t k_ = 60; // TODO round k_ up to multiple of p_?
@@ -91,6 +89,7 @@ public:
     }
 
     void StartPreOp(size_t /* id */) final {
+        LOG << "Run formation.";
         timer_total_.Start();
         timer_preop_.Start();
         current_run_.reserve(run_capacity_);
@@ -99,6 +98,7 @@ public:
     void PreOp(const ValueType& input) {
         auto has_next_capacity = sampler_.Put(input);
         if (!has_next_capacity) {
+            LOG << "Collapse sampler buffers.";
             sampler_.Collapse([this] (ValueType& value){
                 if (current_run_.size() >= run_capacity_) {
                     FinishCurrentRun();
@@ -118,8 +118,21 @@ public:
     }
 
     void StopPreOp(size_t /* id */) final {
+        LOG << "Collapse rest of buffers.";
+        bool is_collapsible;
+        do {
+            // TODO Refactor to emit function
+            LOG << "Collapse sampler buffers.";
+            is_collapsible = sampler_.Collapse([this] (ValueType& value){
+                if (current_run_.size() >= run_capacity_) {
+                    FinishCurrentRun();
+                }
+                current_run_.push_back(value);
+            });
+        } while(is_collapsible);
+        LOG << "Finish last run.";
         if (current_run_.size() > 0) {
-            FinishCurrentRun();
+            FinishCurrentRun(true);
         }
         std::vector<ValueType>().swap(current_run_); // free vector
 
@@ -141,16 +154,14 @@ public:
         timer_main_op.Start();
 
         // Calculate splitters
-        auto splitter_count = p_ - 1;
+        auto splitter_count = final_splitters_.size();
         auto run_count = run_files_.size();
-        LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
-        std::vector<FileSequenceAdapter> run_file_adapters(run_count);
-        for (size_t i = 0; i < run_count; i++) {
-            run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
+        LocalRanks local_ranks(final_splitters_.size(), std::vector<size_t>(run_count));
+        for (size_t s = 0; s < splitter_count; s++) {
+            for (size_t r = 0; r < run_count; r++) {
+                local_ranks[s][r] = run_files_[r]->GetFastIndexOf(final_splitters_[s], 0, 0, run_files_[r]->num_items(), comparator_);
+            }
         }
-        core::run_multi_sequence_selection<FileSequenceAdapter, Comparator>
-                (context_, comparator_, run_file_adapters, local_ranks,
-                 splitter_count);
 
         // Redistribute Elements
         for (size_t run_index = 0; run_index < run_count; run_index++) {
@@ -188,6 +199,7 @@ public:
     }
 
     void PushData(bool consume) final {
+        // TODO push splitters
         size_t local_size = 0;
         if (final_run_files_.size() == 0) {
             // nothing to push
@@ -258,6 +270,8 @@ private:
     std::vector<ValueType> current_run_;
     //! Runs in the first phase of the algorithm
     std::vector<data::SampledFilePtr<ValueType>> run_files_;
+    //! Final splitters used for correcion step
+    std::vector<ValueType> final_splitters_;
     //! Number of items on this worker
     size_t local_items_ = 0;
 
@@ -430,8 +444,11 @@ private:
         // implicitly close writers and flush data
     }
 
-    void FinishCurrentRun() {
+    void FinishCurrentRun(bool is_final = false) {
+        LOG << "Finish current run.";
+
         // Select splitters
+        LOG << "Select " << p_ - 1 << " splitters.";
         std::vector<ValueType> samples;
         sampler_.GetSamples(samples);
 
@@ -439,6 +456,9 @@ private:
         splitters.reserve(p_);
         for (size_t i = 0; i < k_; i += k_ / p_) {
             splitters.emplace_back(SampleIndexPair(samples[i], i));
+            if (is_final) {
+                final_splitters_.emplace_back(samples[i]);
+            }
         }
 
         // Get the ceiling of log(num_total_workers), as SSSS needs 2^n buckets.
@@ -452,30 +472,41 @@ private:
         }
 
         // Build tree
+        LOG << "Build tree of size " << tree_size << " with height " << log_tree_size << ".";
         TreeBuilder(tree.data(),
                     splitters.data(),
                     splitters.size());
 
         // Partition
+        auto old_run_size = current_run_.size();
+        LOG << "Partition and scatter " << old_run_size << " elements.";
         auto data_stream = context_.template GetNewStream<data::MixStream>(this->dia_id());
         TransmitItems(tree.data(), tree_size, log_tree_size, p_,
                 splitters.data(), data_stream);
         current_run_.clear();
 
         // Receive elements and sort
+        LOG << "Receive elements.";
         auto reader = data_stream->GetReader(true);
         while (reader.HasNext()) {
             current_run_.emplace_back(reader.template Next<ValueType>());
+            // TODO Sort while receiving when memory is full?
         }
+        local_items_ += current_run_.size() - old_run_size;
+        LOG << "Sort current run of size " << current_run_.size() << ".";
+        timer_sort_.Start();
         sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
+        timer_sort_.Stop();
 
         // Write elements to file
+        LOG << "Write sorted run to file.";
         run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(this));
         auto current_run_file_writer = run_files_.back()->GetWriter();
         for (auto element : current_run_) {
             current_run_file_writer.template Put<ValueType>(element);
         }
         current_run_file_writer.Close();
+        current_run_.clear();
 
         data_stream.reset();
     }
