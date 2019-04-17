@@ -58,8 +58,8 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
     using SampleIndexPair = std::pair<ValueType, size_t>;
     using LocalRanks = std::vector<std::vector<size_t>>;
 
-    const size_t b_ = 15;
-    const size_t k_ = 3000; // TODO round k_ up to multiple of p_?
+    const size_t b_ = 10;
+    const size_t k_ = 6000; // TODO round k_ up to multiple of p_?
     size_t run_capacity_;
 
 public:
@@ -73,9 +73,10 @@ public:
         : Super(parent.ctx(), "Online Sample Sort", { parent.id() },
                 { parent.node() }),
           comparator_(comparator), sort_algorithm_(sort_algorithm),
+          parent_stack_empty_(ParentDIA::stack_empty),
           sampler_(b_, k_, parent.ctx(), comparator, sort_algorithm)
     {
-        // Hook PreOp(s)
+        // Hook PreOp(s).
         auto pre_op_fn = [this](const ValueType& input) {
             PreOp(input);
         };
@@ -83,14 +84,14 @@ public:
         auto lop_chain = parent.stack().push(pre_op_fn).fold();
         parent.node()->AddChild(this, lop_chain);
 
-        // Count of all workers (and count of target partitions)
+        // Count of all workers (and count of target partitions).
         p_ = context_.num_workers();
         run_capacity_ = (context_.mem_limit() / 2) / sizeof(ValueType);
         LOG << "Run capacity: " << run_capacity_;
     }
 
     void StartPreOp(size_t /* id */) final {
-        LOG << "Phase: Run formation.";
+        LOG << "Phase: Run Formation";
         timer_total_.Start();
         timer_pre_op_.Start();
         current_run_.reserve(run_capacity_);
@@ -116,10 +117,20 @@ public:
 
     //! Receive a whole data::File of ValueType, but only if our stack is empty.
     bool OnPreOpFile(const data::File& file, size_t /* parent_index */) final {
-        (void) file;
-        // TODO What should this do?
+        if (!parent_stack_empty_) {
+            LOGC(common::g_debug_push_file)
+            << "OnlineSampleSort rejected File from parent "
+            << "due to non-empty function stack.";
+            return false;
+        }
 
-        return false;
+        // Accept file.
+        auto reader = file.Copy().GetConsumeReader();
+        while (reader.HasNext()) {
+            PreOp(reader.template Next<ValueType>());
+        }
+
+        return true;
     }
 
     void StopPreOp(size_t /* id */) final {
@@ -175,14 +186,21 @@ public:
     }
 
     void Execute() final {
+        // TODO Update local_items_
         Timer timer_main_op;
+        Timer timer_global_splitter;
+        Timer timer_global_communication;
+        LOG << "Phase: Global Redistribution";
         timer_main_op.Start();
 
-        // Calculate splitters
+        // Calculate splitters.
         auto splitter_count = final_splitters_.size();
         auto run_count = run_files_.size();
         LocalRanks local_ranks(final_splitters_.size(), 
                 std::vector<size_t>(run_count));
+        LOG << "Calculate " << splitter_count << " splitters for " << run_count
+            << " runs each.";
+        timer_global_splitter.Start();
         for (size_t s = 0; s < splitter_count; s++) {
             for (size_t r = 0; r < run_count; r++) {
                 local_ranks[s][r] = run_files_[r]->GetFastIndexOf(
@@ -190,21 +208,34 @@ public:
                         comparator_);
             }
         }
+        timer_global_splitter.Stop();
 
-        // Redistribute Elements
+        // Redistribute elements.
+        LOG << "Scatter " << run_count << " run files.";
         for (size_t run_index = 0; run_index < run_count; run_index++) {
-            auto data_stream = context_.template GetNewStream<data::CatStream>(this->dia_id());
+            auto data_stream = context_.template GetNewStream<data::CatStream>(
+                    this->dia_id());
 
-            // Construct offsets vector
+            // Construct offsets vector.
             std::vector<size_t> run_offsets(splitter_count + 2);
             run_offsets[0] = 0;
-            std::transform(local_ranks.begin(), local_ranks.end(), run_offsets.begin() + 1, [run_index](std::vector<size_t> element) {
+            std::transform(local_ranks.begin(), local_ranks.end(),
+                    run_offsets.begin() + 1,
+                    [run_index](std::vector<size_t> element) {
                 return element[run_index];
             });
-            run_offsets[splitter_count + 1] = run_files_[run_index]->num_items();
+            run_offsets[splitter_count + 1] = run_files_[run_index]->
+                    num_items();
+            LOG << "Offsets[" << run_index << "]: " << run_offsets;
+            LOG << run_offsets[context_.my_rank() + 1] -
+                   run_offsets[context_.my_rank()] << " / "
+                << run_files_[run_index]->num_items()
+                << " elements will stay local.";
 
+            timer_global_communication.Start();
             data_stream->template Scatter<ValueType>(*run_files_[run_index],
                                                      run_offsets, true);
+            timer_global_communication.Stop();
 
             auto final_run_file = context_.GetFilePtr(this);
             final_run_files_.emplace_back(final_run_file);
@@ -214,20 +245,34 @@ public:
         }
 
         timer_main_op.Stop();
+
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() timer_mainop", timer_main_op.SecondsDouble());
+                    "OnlineSampleSort() main op timer",
+                    timer_main_op.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                    "OnlineSampleSort() main op splitter timer",
+                    timer_global_splitter.SecondsDouble());
+            context_.PrintCollectiveMeanStdev(
+                    "OnlineSampleSort() main op communication timer",
+                    timer_global_communication.SecondsDouble());
         }
     }
 
+    //! Communicates how much memory the DIA needs on push data
     DIAMemUse PushDataMemUse() final {
-        // Communicates how much memory the DIA needs on push data
-        // TODO Make it work.
-        return 0;
+        if (final_run_files_.size() <= 1) {
+            // Direct push, no merge necessary.
+            return 0;
+        }
+        else {
+            // Need to perform multi way merging.
+            return DIAMemUse::Max();
+        }
     }
 
     void PushData(bool consume) final {
-        // TODO push splitters
+        // TODO Push splitters (until this point not contained in data)
         size_t local_size = 0;
         if (final_run_files_.size() == 0) {
             // nothing to push
@@ -276,7 +321,9 @@ public:
     }
 
     void Dispose() final {
-        // TODO This may need to do something.
+        run_files_.clear();
+        final_splitters_.clear();
+        final_run_files_.clear();
     }
 
 private:
@@ -288,6 +335,9 @@ private:
     //! Sort function class
     SortAlgorithm sort_algorithm_;
 
+    //! Whether the parent stack is empty
+    const bool parent_stack_empty_;
+
     //! \name PreOp Phase
     //! \{
 
@@ -298,7 +348,7 @@ private:
     std::vector<ValueType> current_run_;
     //! Runs in the first phase of the algorithm
     std::vector<data::SampledFilePtr<ValueType>> run_files_;
-    //! Final splitters used for correcion step
+    //! Final splitters used for redistribution step
     std::vector<ValueType> final_splitters_;
     //! Number of items on this worker
     size_t local_items_ = 0;
@@ -339,6 +389,7 @@ private:
 
     //! \}
 
+    // TODO Refactor to vectors
     class TreeBuilder
     {
     public:
@@ -358,7 +409,7 @@ private:
 
         void recurse(const SampleIndexPair* lo, const SampleIndexPair* hi,
                      unsigned int tree_index) {
-            // Pick middle element as splitter
+            // Pick middle element as splitter.
             const SampleIndexPair* mid = lo + (ssize_t)(hi - lo) / 2;
             assert(mid < splitters_ + splitters_size_);
             tree_[tree_index] = mid->first;
@@ -377,6 +428,7 @@ private:
         return !comparator_(a.first, b.first) && a.second >= b.second;
     }
 
+    // TODO Refactor to vectors
     void TransmitItems(
             // Tree of splitters, sizeof |splitter|
             const ValueType* const tree,
@@ -482,7 +534,7 @@ private:
     void FinishCurrentRun(bool is_final = false) {
         LOG << "Finish current run.";
 
-        // Select splitters
+        // Select splitters.
         LOG << "Select " << p_ - 1 << " splitters.";
         timer_sample_.Start();
         std::vector<ValueType> samples;
@@ -503,19 +555,19 @@ private:
         size_t tree_size = size_t(1) << log_tree_size;
         std::vector<ValueType> tree(tree_size + 1);
 
-        // Add sentinel splitters
+        // Add sentinel splitters.
         for (size_t i = p_; i < tree_size; i++) {
             splitters.push_back(splitters.back());
         }
 
-        // Build tree
+        // Build tree.
         LOG << "Build tree of size " << tree_size << " with height " 
             << log_tree_size << ".";
         TreeBuilder(tree.data(),
                     splitters.data(),
                     splitters.size());
 
-        // Partition
+        // Partition.
         auto old_run_size = current_run_.size();
         LOG << "Partition and communicate " << old_run_size << " elements.";
         auto data_stream = context_.template GetNewStream<data::MixStream>(
@@ -524,7 +576,7 @@ private:
                 splitters.data(), data_stream);
         current_run_.clear();
 
-        // Receive elements and sort
+        // Receive elements and sort.
         LOG << "Receive elements.";
         auto reader = data_stream->GetReader(true);
         timer_pre_op_communication_.Start();
@@ -539,7 +591,7 @@ private:
         sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
         timer_sort_.Stop();
 
-        // Write elements to file
+        // Write elements to file.
         LOG << "Write sorted run to file.";
         run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(
                 this));

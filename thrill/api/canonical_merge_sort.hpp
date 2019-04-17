@@ -471,6 +471,7 @@ private:
     }
 
     void MainOp() {
+        // TODO Update local items
         /* Phase 2 { */
         LOG << "Phase 2.";
         // Calculate splitters
