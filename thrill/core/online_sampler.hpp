@@ -99,7 +99,7 @@ public:
      * \returns True if the data structure still has capacity for more elements
      *  after Put operation
      */
-    bool Put(ValueType& value) {
+    bool Put(const ValueType& value) {
         if (current_buffer_ >= b_ ||
                 !buffers_[current_buffer_].HasCapacity()) {
             New();

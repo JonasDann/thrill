@@ -17,6 +17,11 @@
 #include <thrill/core/online_sampler.hpp>
 #include <thrill/core/multi_sequence_selection.hpp>
 #include <thrill/core/multiway_merge.hpp>
+#include <thrill/data/sampled_file.hpp>
+
+#include <algorithm>
+#include <vector>
+#include <utility>
 
 namespace thrill {
 namespace api {
@@ -116,7 +121,7 @@ public:
         if (current_run_.size() > 0) {
             FinishCurrentRun();
         }
-        std::vector<ValueType>().swap(current_run_[0]); // free vector
+        std::vector<ValueType>().swap(current_run_); // free vector
 
         timer_preop_.Stop();
         if (stats_enabled) {
@@ -319,6 +324,10 @@ private:
         }
     };
 
+    bool EqualSampleGreaterIndex(const SampleIndexPair& a, const SampleIndexPair& b) {
+        return !comparator_(a.first, b.first) && a.second >= b.second;
+    }
+
     void TransmitItems(
             // Tree of splitters, sizeof |splitter|
             const ValueType* const tree,
@@ -362,8 +371,8 @@ private:
             // run items down the tree
             for (size_t l = 0; l < log_k; l++)
             {
-                j0 = 2 * j0 + (compare_function_(el0, tree[j0]) ? 0 : 1);
-                j1 = 2 * j1 + (compare_function_(el1, tree[j1]) ? 0 : 1);
+                j0 = 2 * j0 + (comparator_(el0, tree[j0]) ? 0 : 1);
+                j1 = 2 * j1 + (comparator_(el1, tree[j1]) ? 0 : 1);
             }
 
             size_t b0 = j0 - k;
@@ -399,7 +408,7 @@ private:
             // run item down the tree
             for (size_t l = 0; l < log_k; l++)
             {
-                j0 = 2 * j0 + (compare_function_(el0, tree[j0]) ? 0 : 1);
+                j0 = 2 * j0 + (comparator_(el0, tree[j0]) ? 0 : 1);
             }
 
             size_t b0 = j0 - k;
@@ -426,10 +435,10 @@ private:
         std::vector<ValueType> samples;
         sampler_.GetSamples(samples);
 
-        std::vector<ValueType> splitters;
+        std::vector<SampleIndexPair> splitters;
         splitters.reserve(p_);
         for (size_t i = 0; i < k_; i += k_ / p_) {
-            splitters.emplace_back(samples[i]);
+            splitters.emplace_back(SampleIndexPair(samples[i], i));
         }
 
         // Get the ceiling of log(num_total_workers), as SSSS needs 2^n buckets.
@@ -456,7 +465,7 @@ private:
         // Receive elements and sort
         auto reader = data_stream->GetReader(true);
         while (reader.HasNext()) {
-            current_run_.emplace_back(reader.Next());
+            current_run_.emplace_back(reader.template Next<ValueType>());
         }
         sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
 
