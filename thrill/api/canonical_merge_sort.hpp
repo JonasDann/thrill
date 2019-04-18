@@ -25,7 +25,9 @@
 #include <thrill/data/block_reader.hpp>
 #include <thrill/net/group.hpp>
 
+#include <tlx/vector_free.hpp>
 #include <tlx/math/integer_log2.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
@@ -136,7 +138,7 @@ public:
         if (current_run_[0].size() > 0) {
             FinishCurrentRun();
         }
-        std::vector<ValueType>().swap(current_run_[0]); // free vector
+        tlx::vector_free(current_run_[0]);
 
         timer_pre_op_.Stop();
         if (stats_enabled) {

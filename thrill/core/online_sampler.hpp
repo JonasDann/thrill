@@ -85,11 +85,11 @@ public:
      *
      * \param k Number of elements in each buffer
      */
-    OnlineSampler(size_t b, size_t k, Context& context,
+    OnlineSampler(size_t b, size_t k, Context& context, size_t dia_id,
             const Comparator& comparator, const SortAlgorithm& sort_algorithm)
-            : b_(b), k_(k), context_(context), comparator_(comparator),
-              sort_algorithm_(sort_algorithm), current_buffer_(b),
-              empty_buffers_(b), minimum_level_(0) {
+            : b_(b), k_(k), context_(context), dia_id_(dia_id),
+              comparator_(comparator), sort_algorithm_(sort_algorithm),
+              current_buffer_(b), empty_buffers_(b), minimum_level_(0) {
         buffers_ = std::vector<Buffer>(b, Buffer(k));
         level_counters_.emplace_back(0);
         LOG << "New OnlineSampler(" << b_ << ", " << k_ << ")";
@@ -177,30 +177,83 @@ public:
             buffers_[0].sorted_ = true;
         }
 
-        LOG << "Communicate weights and elements.";
+        LOG << "Send weights and elements and receive elements in PE 0.";
         timer_communication_.Start();
         auto all_weights = context_.net.AllGather(buffers_[0].weight_);
-        auto all_elements = context_.net.AllGather(buffers_[0].elements_); // TODO Implement as stream
-        timer_communication_.Stop();
-        LOG << "Construct " << context_.num_workers() << " buffers.";
-        std::vector<Buffer> buffers;
-        for (size_t p = 0; p < context_.num_workers(); p++) {
-            buffers.emplace_back(Buffer(std::move(all_elements->at(p)),
-                    all_weights->at(p), true));
+        auto weight_sum = 0;
+        for (size_t i = 0; i < all_weights->size(); i++) {
+            weight_sum += all_weights->at(i);
         }
 
-        LOG << "Collapse buffers.";
-        auto old_emit_operations = emit_operations_;
-        Buffer target_buffer(k_);
-        Collapse(buffers, target_buffer, [] (ValueType){});
-        if (stats_enabled) {
-            emit_operations_ = old_emit_operations;
+        auto sample_stream = context_.template GetNewStream<data::CatStream>(
+                dia_id_);
+        auto sample_writers = sample_stream->GetWriters();
+        auto sample_readers = sample_stream->GetReaders();
+
+        for (auto element : buffers_[0].elements_) {
+            sample_writers[0].Put(element);
         }
+        sample_writers[0].Close();
+        timer_communication_.Stop();
+
+        std::vector<ValueType> samples;
+        if (context_.my_rank() == 0) {
+            timer_communication_.Start();
+            LOG << "Construct " << context_.num_workers() << " buffers.";
+            std::vector<Buffer> buffers;
+            for (size_t p = 0; p < context_.num_workers(); p++) {
+                std::vector<ValueType> elements;
+                elements.reserve(k_);
+                while (sample_readers[p].HasNext()) {
+                    elements.emplace_back(
+                            sample_readers[p].template Next<ValueType>());
+                }
+                buffers.emplace_back(Buffer(std::move(elements),
+                                            all_weights->at(p), true));
+            }
+            timer_communication_.Stop();
+
+            LOG << "Collapse buffers.";
+            auto old_emit_operations = emit_operations_;
+            Buffer target_buffer(k_);
+            Collapse(buffers, target_buffer, [] (ValueType){});
+            if (stats_enabled) {
+                emit_operations_ = old_emit_operations;
+            }
+
+            LOG << "Send resulting samples.";
+            timer_communication_.Start();
+            for (size_t p = 1; p < context_.num_workers(); p++) {
+                for (auto element : target_buffer.elements_) {
+                    sample_writers[p].Put(element);
+                }
+                sample_writers[p].Close();
+            }
+            timer_communication_.Stop();
+
+            samples = std::move(target_buffer.elements_);
+        } else {
+            LOG << "Close unused writers.";
+            for (size_t p = 1; p < context_.num_workers(); p++) {
+                sample_writers[p].Close();
+            }
+
+            LOG << "Receive resulting samples.";
+            timer_communication_.Start();
+            samples.reserve(k_);
+            while(sample_readers[0].HasNext()) {
+                samples.emplace_back(
+                        sample_readers[0].template Next<ValueType>());
+            }
+            timer_communication_.Stop();
+        }
+
+        sample_stream.reset();
 
         LOG << "Return buffers.";
-        out_samples = std::move(target_buffer.elements_);
+        out_samples = std::move(samples);
         timer_total_.Stop();
-        return target_buffer.weight_;
+        return weight_sum;
     }
 
     /*!
@@ -242,6 +295,7 @@ private:
     size_t k_;
 
     Context& context_;
+    size_t dia_id_;
     Comparator comparator_;
     SortAlgorithm sort_algorithm_;
 

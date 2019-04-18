@@ -18,6 +18,8 @@
 #include <thrill/core/multiway_merge.hpp>
 #include <thrill/data/sampled_file.hpp>
 
+#include <tlx/vector_free.hpp>
+
 #include <algorithm>
 #include <vector>
 #include <utility>
@@ -59,7 +61,7 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
     using LocalRanks = std::vector<std::vector<size_t>>;
 
     const size_t b_ = 10;
-    const size_t k_ = 3000;
+    const size_t k_ = 6000;
     size_t run_capacity_;
 
 public:
@@ -74,7 +76,8 @@ public:
                 { parent.node() }),
           comparator_(comparator), sort_algorithm_(sort_algorithm),
           parent_stack_empty_(ParentDIA::stack_empty),
-          sampler_(b_, k_, parent.ctx(), comparator, sort_algorithm)
+          sampler_(b_, k_, parent.ctx(), this->dia_id(), comparator,
+                   sort_algorithm)
     {
         // Hook PreOp(s).
         auto pre_op_fn = [this](const ValueType& input) {
@@ -168,7 +171,7 @@ public:
         if (current_run_.size() > 0) {
             FinishCurrentRun(true);
         }
-        std::vector<ValueType>().swap(current_run_); // free vector
+        tlx::vector_free(current_run_);
 
         timer_pre_op_.Stop();
         if (stats_enabled) {
