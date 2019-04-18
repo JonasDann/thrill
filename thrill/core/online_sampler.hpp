@@ -39,7 +39,7 @@ template <
         typename SortAlgorithm,
         bool Stable = false>
 class OnlineSampler {
-    using LooserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
+    using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
     static constexpr bool debug = true;
 
@@ -107,7 +107,9 @@ public:
                 !buffers_[current_buffer_].HasCapacity()) {
             New();
         }
-        total_local_elements_++;
+        if (stats_enabled) {
+            put_operations_++;
+        }
         auto has_capacity = buffers_[current_buffer_].Put(value);
         return has_capacity || empty_buffers_ > 0;
     }
@@ -186,8 +188,12 @@ public:
         }
 
         LOG << "Collapse buffers.";
+        auto old_emit_operations = emit_operations_;
         Buffer target_buffer(k_);
         Collapse(buffers, target_buffer, [] (ValueType){});
+        if (stats_enabled) {
+            emit_operations_ = old_emit_operations;
+        }
 
         LOG << "Return buffers.";
         out_samples = std::move(target_buffer.elements_);
@@ -195,10 +201,25 @@ public:
         return target_buffer.weight_;
     }
 
+    /*!
+     * Returns currently highest weighted samples buffer that is stored in the
+     * local instance.
+     *
+     * \param out_samples Vector that will contain the local samples
+     *
+     * \returns Weight of elements
+     */
+    size_t GetLocalSamples(std::vector<ValueType> &out_samples) {
+        out_samples = buffers_[0].elements_;
+        return buffers_[0].weight_;
+    }
+
     void PrintStats() {
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op local items", total_local_elements_);
+                    "OnlineSampler put operations", put_operations_);
+            context_.PrintCollectiveMeanStdev(
+                    "OnlineSampler emit operations", emit_operations_);
             context_.PrintCollectiveMeanStdev(
                     "OnlineSampler total timer",
                     timer_total_.SecondsDouble());
@@ -228,7 +249,8 @@ private:
     size_t empty_buffers_;
     size_t minimum_level_;
 
-    size_t total_local_elements_;
+    size_t put_operations_;
+    size_t emit_operations_;
     Timer timer_total_;
     Timer timer_sort_;
     Timer timer_communication_;
@@ -261,8 +283,9 @@ private:
     template <typename Emitter>
     void Collapse(std::vector<Buffer>& buffers, Buffer& target_buffer,
             const Emitter& emit) {
-        LOG << "Sort buffers and construct looser tree.";
-        LooserTree looser_tree(buffers.size(), comparator_);
+        LOG << "Sort buffers and construct loser tree.";
+        auto previous_emit_operations = emit_operations_;
+        LoserTree loser_tree(buffers.size(), comparator_);
         size_t weight_sum = 0;
         for (size_t i = 0; i < buffers.size(); i++) {
             if (!buffers[i].sorted_) {
@@ -273,9 +296,11 @@ private:
                 buffers[i].sorted_ = true;
             }
             weight_sum += buffers[i].weight_;
-            looser_tree.insert_start(&buffers[i].elements_[0], i, false);
+            loser_tree.insert_start(&buffers[i].elements_[0], i, false);
+            LOG << "[" << i << "] " << buffers[i].elements_.size() << "*"
+                 << buffers[i].weight_;
         }
-        looser_tree.init();
+        loser_tree.init();
 
         target_buffer.weight_ = weight_sum;
         target_buffer.sorted_ = true;
@@ -286,13 +311,14 @@ private:
         // Advance total_index for amount of empty elements and calculate number
         // of empty elements in target buffer.
         timer_merge_.Start();
-        LOG << "Skip half of empty elements and calculate for loop bound.";
         for (size_t i = 0; i < buffers.size(); i++) {
             size_t empty_elements = k_ - buffers[i].elements_.size();
             total_index += empty_elements * buffers[i].weight_;
         }
         size_t target_buffer_empty = total_index / weight_sum;
-        total_index = (total_index / 2) % weight_sum;
+        total_index = (total_index % weight_sum) / 2;
+        LOG << "Target buffer has " << target_buffer_empty
+            << " empty elements and total index is " << total_index << ".";
 
         LOG << "Merge buffers.";
         for (size_t j = 0; j < k_ - target_buffer_empty; j++) {
@@ -301,11 +327,14 @@ private:
             bool first = true;
             assert(total_index < target_rank);
             while (total_index < target_rank) {
-                auto minimum_index = looser_tree.min_source();
+                auto minimum_index = loser_tree.min_source();
                 if (first) {
                     first = false;
                 } else {
                     emit(sample);
+                    if (stats_enabled) {
+                        emit_operations_++;
+                    }
                 }
                 sample = buffers[minimum_index].
                         elements_[positions[minimum_index]];
@@ -313,14 +342,37 @@ private:
                 positions[minimum_index]++;
                 auto has_next = positions[minimum_index] <
                                 buffers[minimum_index].elements_.size();
-                looser_tree.delete_min_insert(
+                loser_tree.delete_min_insert(
                         has_next ? &buffers[minimum_index].
                                 elements_[positions[minimum_index]] : nullptr,
                         !has_next);
             }
             target_buffer.Put(sample);
         }
+        // Emit remaining elements.
+        size_t remaining_element_count = 0;
+        for (size_t i = 0; i < buffers.size(); i++) {
+            remaining_element_count += buffers[i].elements_.size() -
+                    positions[i];
+        }
+        LOG << "Emit remaining " << remaining_element_count << " elements.";
+        for (size_t i = 0; i < remaining_element_count; i++) {
+            auto minimum_index = loser_tree.min_source();
+            emit(buffers[minimum_index].elements_[positions[minimum_index]]);
+            if (stats_enabled) {
+                emit_operations_++;
+            }
+            positions[minimum_index]++;
+            auto has_next = positions[minimum_index] <
+                            buffers[minimum_index].elements_.size();
+            loser_tree.delete_min_insert(
+                    has_next ? &buffers[minimum_index].
+                            elements_[positions[minimum_index]] : nullptr,
+                    !has_next);
+
+        }
         timer_merge_.Stop();
+        LOG << emit_operations_ - previous_emit_operations << " emitted.";
     }
 };
 

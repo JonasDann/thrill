@@ -65,9 +65,10 @@ int main(int argc, char *argv[]) {
                     std::uniform_int_distribution<uint64_t> distribution(
                             0, std::numeric_limits<uint64_t>::max());
 
+                    size_t element_count = size / sizeof(Record);
                     common::StatsTimerStart timer;
                     auto sorted = api::Generate(
-                            ctx, size / sizeof(Record),
+                            ctx, element_count,
                             [&distribution, &generator](size_t) -> Record {
                                 uint64_t key = distribution(generator);
                                 Record r{key, key};
@@ -76,11 +77,12 @@ int main(int argc, char *argv[]) {
                             .CanonicalMergeSort();
                     if (self_verify) {
                         auto result = sorted.AllGather();
+                        die_unless(result.size() == element_count);
                         for (size_t j = 1; j < result.size(); j++) {
                             die_unless(result[i - 1] < result[i]);
                         }
                     } else {
-                        sorted.Size();
+                        die_unless(sorted.Size() == element_count);
                     }
                     timer.Stop();
                     if (!ctx.my_rank()) {

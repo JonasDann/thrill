@@ -95,14 +95,16 @@ public:
         timer_total_.Start();
         timer_pre_op_.Start();
         current_run_.reserve(run_capacity_);
+        final_splitters_.reserve(p_ - 1);
     }
 
     void PreOp(const ValueType& input) {
+        // TODO Handle different amounts of elements on PEs
         auto has_next_capacity = sampler_.Put(input);
         if (!has_next_capacity) {
-            LOG << "Collapse sampler buffers.";
+            LOG0 << "Collapse sampler buffers.";
             timer_sample_.Start();
-            sampler_.Collapse([this] (ValueType& value){
+            sampler_.Collapse([&] (ValueType& value){
                 if (current_run_.size() >= run_capacity_) {
                     timer_sample_.Stop();
                     FinishCurrentRun();
@@ -139,8 +141,8 @@ public:
         timer_sample_.Start();
         do {
             // TODO Refactor to emit function
-            LOG << "Collapse sampler buffers.";
-            is_collapsible = sampler_.Collapse([this] (ValueType& value){
+            LOG0 << "Collapse sampler buffers.";
+            is_collapsible = sampler_.Collapse([&] (ValueType& value){
                 if (current_run_.size() >= run_capacity_) {
                     timer_sample_.Stop();
                     FinishCurrentRun();
@@ -149,6 +151,18 @@ public:
                 current_run_.push_back(value);
             });
         } while(is_collapsible);
+
+        LOG << "Add " << k_ << " local samples to last run.";
+        std::vector<ValueType> samples;
+        sampler_.GetLocalSamples(samples);
+        for (auto sample : samples) {
+            if (current_run_.size() >= run_capacity_) {
+                timer_sample_.Stop();
+                FinishCurrentRun();
+                timer_sample_.Start();
+            }
+            current_run_.push_back(sample);
+        }
         timer_sample_.Stop();
         LOG << "Finish last run.";
         if (current_run_.size() > 0) {
@@ -273,13 +287,10 @@ public:
     }
 
     void PushData(bool consume) final {
-        // TODO Push splitters (until this point not contained in data)
-        size_t local_size = 0;
         if (final_run_files_.size() == 0) {
             // nothing to push
         }
         else if (final_run_files_.size() == 1) {
-            local_size = final_run_files_[0]->num_items();
             this->PushFile(*(final_run_files_[0]), consume);
         }
         else {
@@ -305,7 +316,6 @@ public:
             if (debug && file_merge_tree.HasNext()) {
                 first_element = file_merge_tree.Next();
                 this->PushItem(first_element);
-                local_size++;
             }
             ValueType last_element;
             while (file_merge_tree.HasNext()) {
@@ -314,7 +324,6 @@ public:
                 if (debug) {
                     last_element = next;
                 }
-                local_size++;
             }
             LOG << "Finished merging (first element: " << first_element
                 << ", last element: " << last_element << ").";
@@ -543,8 +552,9 @@ private:
         timer_sample_.Stop();
 
         std::vector<SampleIndexPair> splitters;
-        splitters.reserve(p_);
-        for (size_t i = 0; i < k_; i += k_ / p_) {
+        splitters.reserve(p_ - 1);
+        auto step_size = k_ / p_;
+        for (size_t i = step_size; i < k_; i += step_size) {
             splitters.emplace_back(SampleIndexPair(samples[i], i));
             if (is_final) {
                 final_splitters_.emplace_back(samples[i]);
@@ -587,6 +597,7 @@ private:
         }
         timer_pre_op_communication_.Stop();
         local_items_ += current_run_.size() - old_run_size;
+
         LOG << "Sort current run of size " << current_run_.size() << ".";
         timer_sort_.Start();
         sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
