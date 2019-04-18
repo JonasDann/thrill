@@ -59,7 +59,7 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
     using LocalRanks = std::vector<std::vector<size_t>>;
 
     const size_t b_ = 10;
-    const size_t k_ = 3000; // TODO round k_ up to multiple of p_?
+    const size_t k_ = 3000;
     size_t run_capacity_;
 
 public:
@@ -544,7 +544,6 @@ private:
     void FinishCurrentRun(bool is_final = false) {
         LOG << "Finish current run.";
 
-        // Select splitters.
         LOG << "Select " << p_ - 1 << " splitters.";
         timer_sample_.Start();
         std::vector<ValueType> samples;
@@ -554,12 +553,25 @@ private:
         std::vector<SampleIndexPair> splitters;
         splitters.reserve(p_ - 1);
         auto step_size = k_ / p_;
-        for (size_t i = step_size; i < k_; i += step_size) {
-            splitters.emplace_back(SampleIndexPair(samples[i], i));
+        auto remainder = k_ % p_;
+        auto empty_element_count = k_ - samples.size();
+        auto empty_splitters = empty_element_count / step_size;
+        auto initial_index = (empty_element_count % step_size) / 2;
+        for (size_t i = 1; i < p_ - empty_splitters; i ++) {
+            auto index = i * step_size;
+            if (i == 1) {
+                index -= initial_index;
+            }
+            if (i <= remainder) {
+                index++;
+            }
+            assert(index < samples.size());
+            splitters.emplace_back(SampleIndexPair(samples[index], index));
             if (is_final) {
-                final_splitters_.emplace_back(samples[i]);
+                final_splitters_.emplace_back(samples[index]);
             }
         }
+        assert(splitters.size() == p_ - 1);
 
         // Get the ceiling of log(num_total_workers), as SSSS needs 2^n buckets.
         size_t log_tree_size = tlx::integer_log2_ceil(p_);

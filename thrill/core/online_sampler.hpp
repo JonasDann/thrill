@@ -158,7 +158,9 @@ public:
 
     /*!
      * Communicates currently highest weighted samples buffer with all PEs and
-     * returns collapsed result.
+     * returns collapsed result. The samples vector does not have to be filled
+     * completely, when partially filled buffers were collapsed. This has to be
+     * handled accordingly.
      *
      * \param out_samples Vector that will contain the resulting samples
      *
@@ -178,7 +180,7 @@ public:
         LOG << "Communicate weights and elements.";
         timer_communication_.Start();
         auto all_weights = context_.net.AllGather(buffers_[0].weight_);
-        auto all_elements = context_.net.AllGather(buffers_[0].elements_);
+        auto all_elements = context_.net.AllGather(buffers_[0].elements_); // TODO Implement as stream
         timer_communication_.Stop();
         LOG << "Construct " << context_.num_workers() << " buffers.";
         std::vector<Buffer> buffers;
@@ -315,13 +317,13 @@ private:
             size_t empty_elements = k_ - buffers[i].elements_.size();
             total_index += empty_elements * buffers[i].weight_;
         }
-        size_t target_buffer_empty = total_index / weight_sum;
+        size_t target_buffer_empty_element_count = total_index / weight_sum;
         total_index = (total_index % weight_sum) / 2;
-        LOG << "Target buffer has " << target_buffer_empty
+        LOG << "Target buffer has " << target_buffer_empty_element_count
             << " empty elements and total index is " << total_index << ".";
 
         LOG << "Merge buffers.";
-        for (size_t j = 0; j < k_ - target_buffer_empty; j++) {
+        for (size_t j = 0; j < k_ - target_buffer_empty_element_count; j++) {
             size_t target_rank = GetTargetRank(j, weight_sum);
             ValueType sample = buffers[0].elements_[0]; // Init removes warning
             bool first = true;
