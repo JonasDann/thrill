@@ -39,6 +39,7 @@ template <
         typename SortAlgorithm,
         bool Stable = false>
 class OnlineSampler {
+    // TODO How to prevent use of malloc with move?
     using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
     static constexpr bool debug = false;

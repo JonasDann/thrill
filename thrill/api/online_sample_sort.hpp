@@ -117,7 +117,6 @@ public:
             });
             timer_sample_.Stop();
         }
-        local_items_++;
     }
 
     //! Receive a whole data::File of ValueType, but only if our stack is empty.
@@ -204,7 +203,6 @@ public:
     }
 
     void Execute() final {
-        // TODO Update local_items_
         Timer timer_main_op;
         Timer timer_global_splitter;
         Timer timer_global_communication;
@@ -214,6 +212,17 @@ public:
         // Calculate splitters.
         auto splitter_count = final_splitters_.size();
         auto run_count = run_files_.size();
+        auto max_run_count = context_.net.AllReduce(run_count,
+                [](const size_t& a, const size_t& b){
+            return std::max(a, b);
+        });
+        LOG << "Add " << max_run_count - run_count << " dummy runs";
+        while (run_files_.size() < max_run_count) {
+            run_files_.emplace_back(context_.template GetSampledFilePtr
+                    <ValueType>(this));
+        }
+        run_count = max_run_count;
+
         LocalRanks local_ranks(final_splitters_.size(), 
                 std::vector<size_t>(run_count));
         LOG << "Calculate " << splitter_count << " splitters for " << run_count
@@ -230,6 +239,7 @@ public:
 
         // Redistribute elements.
         LOG << "Scatter " << run_count << " run files.";
+        local_items_ = 0;
         for (size_t run_index = 0; run_index < run_count; run_index++) {
             auto data_stream = context_.template GetNewStream<data::CatStream>(
                     this->dia_id());
@@ -258,6 +268,7 @@ public:
             auto final_run_file = context_.GetFilePtr(this);
             final_run_files_.emplace_back(final_run_file);
             data_stream->GetFile(final_run_file);
+            local_items_ += final_run_file->num_items();
 
             data_stream.reset();
         }
@@ -265,6 +276,8 @@ public:
         timer_main_op.Stop();
 
         if (stats_enabled) {
+            context_.PrintCollectiveMeanStdev(
+                    "OnlineSampleSort() main op local items", local_items_);
             context_.PrintCollectiveMeanStdev(
                     "OnlineSampleSort() main op timer",
                     timer_main_op.SecondsDouble());
@@ -290,6 +303,7 @@ public:
     }
 
     void PushData(bool consume) final {
+        // TODO Remove dummy runs, if still empty
         if (final_run_files_.size() == 0) {
             // nothing to push
         }
@@ -544,6 +558,26 @@ private:
         // implicitly close writers and flush data
     }
 
+    void SortWriteClearRun() {
+        LOG << "Sort current run of size " << current_run_.size() << ".";
+        timer_sort_.Start();
+        sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
+        timer_sort_.Stop();
+
+        // Write elements to file.
+        LOG << "Write sorted run to file.";
+        run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(
+                this));
+        timer_pre_op_file_io_.Start();
+        auto current_run_file_writer = run_files_.back()->GetWriter();
+        for (auto element : current_run_) {
+            current_run_file_writer.template Put<ValueType>(element);
+        }
+        current_run_file_writer.Close();
+        timer_pre_op_file_io_.Stop();
+        current_run_.clear();
+    }
+
     void FinishCurrentRun(bool is_final = false) {
         LOG << "Finish current run.";
 
@@ -606,44 +640,31 @@ private:
                     splitters.size());
 
         // Partition.
-        auto old_run_size = current_run_.size();
-        LOG << "Partition and communicate " << old_run_size << " elements.";
+        LOG << "Partition and communicate " << current_run_.size() << " elements.";
         auto data_stream = context_.template GetNewStream<data::MixStream>(
                 this->dia_id());
         TransmitItems(tree.data(), tree_size, log_tree_size, p_,
                 splitters.data(), data_stream);
         current_run_.clear();
 
-        // TODO Heap bug
-
         // Receive elements and sort.
         LOG << "Receive elements.";
         auto reader = data_stream->GetReader(true);
         timer_pre_op_communication_.Start();
         while (reader.HasNext()) {
+            if (current_run_.size() >= run_capacity_) {
+                timer_pre_op_communication_.Stop();
+                local_items_ += current_run_.size();
+                SortWriteClearRun();
+                timer_pre_op_communication_.Start();
+            }
             current_run_.emplace_back(reader.template Next<ValueType>());
-            // TODO Sort and write to file while receiving when memory is full?
         }
         timer_pre_op_communication_.Stop();
-        local_items_ += current_run_.size() - old_run_size;
-
-        LOG << "Sort current run of size " << current_run_.size() << ".";
-        timer_sort_.Start();
-        sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
-        timer_sort_.Stop();
-
-        // Write elements to file.
-        LOG << "Write sorted run to file.";
-        run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(
-                this));
-        timer_pre_op_file_io_.Start();
-        auto current_run_file_writer = run_files_.back()->GetWriter();
-        for (auto element : current_run_) {
-            current_run_file_writer.template Put<ValueType>(element);
+        if (current_run_.size() > 0) {
+            local_items_ += current_run_.size();
+            SortWriteClearRun();
         }
-        current_run_file_writer.Close();
-        timer_pre_op_file_io_.Stop();
-        current_run_.clear();
 
         data_stream.reset();
     }
