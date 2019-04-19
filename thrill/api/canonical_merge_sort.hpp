@@ -201,6 +201,7 @@ public:
 
     void PushData(bool consume) final {
         // TODO Partial multi way merge, when there are too many runs
+        // TODO Remove dummy runs, if still empty
         /* Phase 3 { */
         LOG << "Phase 3.";
 
@@ -482,7 +483,19 @@ private:
         // Calculate splitters
         auto splitter_count = p_ - 1;
         auto run_count = run_files_.size();
-        LOG << "Calculating " << splitter_count << " splitters.";
+        /*auto max_run_count = context_.net.AllReduce(run_count,
+                [](const size_t& a, const size_t& b){
+                    return std::max(a, b);
+                });
+        LOG << "Add " << max_run_count - run_count << " dummy runs";
+        while (run_files_.size() < max_run_count) {
+            run_files_.emplace_back(context_.template GetSampledFilePtr
+                    <ValueType>(this));
+        }
+        run_count = max_run_count;*/
+
+        LOG << "Calculate " << splitter_count << " splitters for " << run_count
+            << " runs each.";
         LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
         std::vector<FileSequenceAdapter> run_file_adapters(run_count);
         for (size_t i = 0; i < run_count; i++) {

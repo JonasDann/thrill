@@ -214,8 +214,8 @@ public:
         auto run_count = run_files_.size();
         auto max_run_count = context_.net.AllReduce(run_count,
                 [](const size_t& a, const size_t& b){
-            return std::max(a, b);
-        });
+                    return std::max(a, b);
+                });
         LOG << "Add " << max_run_count - run_count << " dummy runs";
         while (run_files_.size() < max_run_count) {
             run_files_.emplace_back(context_.template GetSampledFilePtr
@@ -223,10 +223,9 @@ public:
         }
         run_count = max_run_count;
 
-        LocalRanks local_ranks(final_splitters_.size(), 
-                std::vector<size_t>(run_count));
         LOG << "Calculate " << splitter_count << " splitters for " << run_count
             << " runs each.";
+        LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
         timer_global_splitter.Start();
         for (size_t s = 0; s < splitter_count; s++) {
             for (size_t r = 0; r < run_count; r++) {
@@ -303,6 +302,7 @@ public:
     }
 
     void PushData(bool consume) final {
+        // TODO Partial multi way merge, when there are too many runs
         // TODO Remove dummy runs, if still empty
         if (final_run_files_.size() == 0) {
             // nothing to push
@@ -558,7 +558,7 @@ private:
         // implicitly close writers and flush data
     }
 
-    void SortWriteClearRun() {
+    void SortWriteClearCurrentRun() {
         LOG << "Sort current run of size " << current_run_.size() << ".";
         timer_sort_.Start();
         sort_algorithm_(current_run_.begin(), current_run_.end(), comparator_);
@@ -655,7 +655,7 @@ private:
             if (current_run_.size() >= run_capacity_) {
                 timer_pre_op_communication_.Stop();
                 local_items_ += current_run_.size();
-                SortWriteClearRun();
+                SortWriteClearCurrentRun();
                 timer_pre_op_communication_.Start();
             }
             current_run_.emplace_back(reader.template Next<ValueType>());
@@ -663,7 +663,7 @@ private:
         timer_pre_op_communication_.Stop();
         if (current_run_.size() > 0) {
             local_items_ += current_run_.size();
-            SortWriteClearRun();
+            SortWriteClearCurrentRun();
         }
 
         data_stream.reset();
