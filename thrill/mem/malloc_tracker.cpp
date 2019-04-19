@@ -61,7 +61,7 @@ namespace mem {
 // user-defined options for output malloc()/free() operations to stderr
 
 // v-- set these to 1 for log output
-static constexpr bool log_operations = 0;
+static constexpr bool log_operations = 1;
 static constexpr bool log_bypass_operations = 0;
 
 static constexpr size_t log_operations_threshold = 100000;
