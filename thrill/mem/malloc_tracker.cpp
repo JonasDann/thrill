@@ -64,7 +64,7 @@ namespace mem {
 static constexpr bool log_operations = 1;
 static constexpr bool log_bypass_operations = 0;
 
-static constexpr size_t log_operations_threshold = 100000;
+static constexpr size_t log_operations_threshold = 1000000;
 static constexpr size_t log_bypass_operations_threshold = 100000;
 
 // v-- set these to 1 for profiling output
