@@ -174,6 +174,8 @@ public:
         timer_main_op.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
+                    "CanonicalMergeSort() main op local items", local_items_);
+            context_.PrintCollectiveMeanStdev(
                     "CanonicalMergeSort() main op timer",
                     timer_main_op.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
@@ -450,6 +452,8 @@ private:
         timer_pre_op_scatter_.Stop();
         current_run_[0].clear();
 
+        // TODO Heap bug
+
         LOG << "Building merge tree.";
         auto multi_way_merge_tree = core::make_multiway_merge_tree<ValueType>(
                 data_readers.begin(), data_readers.end(), compare_function_);
@@ -473,7 +477,6 @@ private:
     }
 
     void MainOp() {
-        // TODO Update local items
         /* Phase 2 { */
         LOG << "Phase 2.";
         // Calculate splitters
@@ -494,7 +497,7 @@ private:
 
         // Redistribute elements
         LOG << "Scatter " << run_count << " run files.";
-
+        local_items_ = 0;
         for (size_t run_index = 0; run_index < run_count; run_index++) {
             auto data_stream = context_.template GetNewStream<data::CatStream>(
                     this->dia_id());
@@ -522,6 +525,7 @@ private:
             auto final_run_file = context_.GetFilePtr(this);
             final_run_files_.emplace_back(final_run_file);
             data_stream->GetFile(final_run_file);
+            local_items_ += final_run_file->num_items();
 
             data_stream.reset();
         }
