@@ -89,19 +89,22 @@ public:
      * \param k Number of elements in each buffer
      */
     OnlineSampler(size_t b, size_t k, Context& context, size_t dia_id,
-            const Comparator& comparator, const SortAlgorithm& sort_algorithm)
-            : b_(b), k_(k), context_(context), dia_id_(dia_id),
-              comparator_(comparator), sort_algorithm_(sort_algorithm),
-              pool_buffer_(k), current_buffer_index_(b), empty_buffer_count_(b),
-              put_operations_(0), emit_operations_(0) {
+            const Comparator& comparator, const SortAlgorithm& sort_algorithm,
+            bool non_uniform_sampling = true, size_t r = 1)
+            : b_(b), k_(k), non_uniform_sampling_(non_uniform_sampling), r_(r),
+              context_(context), dia_id_(dia_id), comparator_(comparator),
+              sort_algorithm_(sort_algorithm), pool_buffer_(k),
+              current_buffer_index_(b), empty_buffer_count_(b) {
         buffers_ = std::vector<Buffer>(b, Buffer(k));
         level_counters_.emplace_back(0);
         LOG << "New OnlineSampler(" << b_ << ", " << k_ << ")";
     }
 
     /*!
-     * Put an element into the data structure. If this returns false, Collapse
-     * has to be called.
+     * Put an element into the data structure. If the random sampling factor r
+     * > 1, the value is put into a sample block where a random value is drawn
+     * from, if the sample block size reaches r. Thereafter the sample block is
+     * cleared. If this returns false, Collapse has to be called.
      *
      * \returns True if the data structure still has capacity for more elements
      *  after Put operation
@@ -111,25 +114,28 @@ public:
                 !buffers_[current_buffer_index_].HasCapacity()) {
             New();
         }
-        if (stats_enabled) {
-            put_operations_++;
+
+        bool has_capacity = true;
+        if (r_ <= 1) {
+            has_capacity = buffers_[current_buffer_index_].Put(value);
+        } else {
+            sample_block_.emplace_back(value);
+            if (sample_block_.size() >= r_) {
+                has_capacity = buffers_[current_buffer_index_].
+                        Put(sample_block_[0]);
+                sample_block_.clear();
+            }
         }
-        auto has_capacity = buffers_[current_buffer_index_].Put(value);
         return has_capacity || empty_buffer_count_ > 0;
     }
 
     /*!
-     * Put an element into the data structure.
-     *
-     * \tparam Emitter Type of emitter function that is called with elements
-     *  that are no longer in the buffers after collapse operation
-     *
-     * \param emit Emitter function void emit(ValueType element)
+     * Collapse the lowest level of buffers. If it only contains one buffer,
+     * collapse the lowest and the second lowest levels.
      *
      * \returns True if there is more than one buffer remaining
      */
-    template <typename Emitter>
-    bool Collapse(const Emitter& emit) {
+    bool Collapse() {
         timer_total_.Start();
         LOG << "Collapse()";
         std::vector<Buffer> level;
@@ -154,7 +160,7 @@ public:
         current_buffer_index_ = b_;
 
         LOG << "Collapse " << level.size() << " buffers.";
-        Collapse(level, pool_buffer_, emit);
+        Collapse(level, pool_buffer_);
         buffers_[level_begin] = std::move(pool_buffer_);
         empty_buffer_count_--;
         size_t i = 0;
@@ -236,12 +242,8 @@ public:
             timer_communication_.Stop();
 
             LOG << "Collapse buffers.";
-            auto old_emit_operations = emit_operations_;
             Buffer target_buffer(k_);
-            Collapse(buffers, target_buffer, [] (ValueType){});
-            if (stats_enabled) {
-                emit_operations_ = old_emit_operations;
-            }
+            Collapse(buffers, target_buffer);
 
             LOG << "Send resulting samples.";
             timer_communication_.Start();
@@ -294,10 +296,6 @@ public:
     void PrintStats() {
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampler put operations", put_operations_);
-            context_.PrintCollectiveMeanStdev(
-                    "OnlineSampler emit operations", emit_operations_);
-            context_.PrintCollectiveMeanStdev(
                     "OnlineSampler total timer",
                     timer_total_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
@@ -315,20 +313,21 @@ public:
 private:
     size_t b_;
     size_t k_;
+    bool non_uniform_sampling_;
+    size_t r_;
 
     Context& context_;
     size_t dia_id_;
     Comparator comparator_;
     SortAlgorithm sort_algorithm_;
 
+    std::vector<ValueType> sample_block_;
     std::vector<Buffer> buffers_;
     Buffer pool_buffer_;
     std::vector<size_t> level_counters_;
     size_t current_buffer_index_;
     size_t empty_buffer_count_;
 
-    size_t put_operations_;
-    size_t emit_operations_;
     Timer timer_total_;
     Timer timer_sort_;
     Timer timer_communication_;
@@ -354,11 +353,8 @@ private:
         }
     }
 
-    template <typename Emitter>
-    void Collapse(std::vector<Buffer>& buffers, Buffer& target_buffer,
-            const Emitter& emit) {
+    void Collapse(std::vector<Buffer>& buffers, Buffer& target_buffer) {
         LOG << "Sort buffers and construct loser tree.";
-        auto previous_emit_operations = emit_operations_;
         LoserTree loser_tree(buffers.size(), comparator_);
         size_t weight_sum = 0;
         for (size_t i = 0; i < buffers.size(); i++) {
@@ -398,18 +394,9 @@ private:
         for (size_t j = 0; j < k_ - target_buffer_empty_element_count; j++) {
             size_t target_rank = GetTargetRank(j, weight_sum);
             ValueType sample = buffers[0].elements_[0]; // Init removes warning
-            bool first = true;
             assert(total_index < target_rank);
             while (total_index < target_rank) {
                 auto minimum_index = loser_tree.min_source();
-                if (first) {
-                    first = false;
-                } else {
-                    emit(sample);
-                    if (stats_enabled) {
-                        emit_operations_++;
-                    }
-                }
                 sample = buffers[minimum_index].
                         elements_[positions[minimum_index]];
                 total_index += buffers[minimum_index].weight_;
@@ -423,30 +410,7 @@ private:
             }
             target_buffer.Put(sample);
         }
-        // Emit remaining elements.
-        size_t remaining_element_count = 0;
-        for (size_t i = 0; i < buffers.size(); i++) {
-            remaining_element_count += buffers[i].elements_.size() -
-                    positions[i];
-        }
-        LOG << "Emit remaining " << remaining_element_count << " elements.";
-        for (size_t i = 0; i < remaining_element_count; i++) {
-            auto minimum_index = loser_tree.min_source();
-            emit(buffers[minimum_index].elements_[positions[minimum_index]]);
-            if (stats_enabled) {
-                emit_operations_++;
-            }
-            positions[minimum_index]++;
-            auto has_next = positions[minimum_index] <
-                            buffers[minimum_index].elements_.size();
-            loser_tree.delete_min_insert(
-                    has_next ? &buffers[minimum_index].
-                            elements_[positions[minimum_index]] : nullptr,
-                    !has_next);
-
-        }
         timer_merge_.Stop();
-        LOG << emit_operations_ - previous_emit_operations << " emitted.";
     }
 };
 

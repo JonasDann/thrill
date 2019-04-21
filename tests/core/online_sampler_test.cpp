@@ -59,7 +59,7 @@ TEST(OnlineSampler, IntUniFullSortedBufferSampling) {
         size_t N_pow = 5;
         size_t N_p = ((size_t) (pow(10, N_pow) / (p * b * k)) + 1) * b * k;
         core::OnlineSampler<int, Comparator, DefaultSortAlgorithm> sampler(b, k,
-                context, 0, comparator, sort_algorithm);
+                context, 0, comparator, sort_algorithm, false, 1);
 
         // generate input sequence
         std::vector<int> sequence;
@@ -69,23 +69,18 @@ TEST(OnlineSampler, IntUniFullSortedBufferSampling) {
         }
         std::sort(sequence.begin(), sequence.end(), comparator);
 
-        auto emit = [sequence](int element) {
-            ASSERT_TRUE(sequence.end() != std::find(sequence.begin(),
-                                                    sequence.end(), element));
-        };
-
         // stream data into buffers
         bool collapsible = true;
         for (size_t i = 0; i < N_p; i++) {
             auto has_capacity = sampler.Put(sequence[i]);
             if (!has_capacity) {
-                collapsible = sampler.Collapse(emit);
+                collapsible = sampler.Collapse();
             }
         }
 
         // collapse until final samples
         while (collapsible) {
-            collapsible = sampler.Collapse(emit);
+            collapsible = sampler.Collapse();
         }
 
         auto global_sequence = context.net.AllReduce(sequence,
