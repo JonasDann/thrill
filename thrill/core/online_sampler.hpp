@@ -39,10 +39,10 @@ template <
         typename SortAlgorithm,
         bool Stable = false>
 class OnlineSampler {
-    // TODO How to prevent use of malloc with move?
+    // TODO Implement non-uniform sampling
     using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
-    static constexpr bool debug = false;
+    static constexpr bool debug = true;
 
     //! Set this variable to true to enable generation and output of sampling
     //! stats
@@ -57,7 +57,9 @@ class OnlineSampler {
         size_t weight_;
         bool sorted_;
 
-        explicit Buffer(size_t k) : weight_(0), sorted_(false), k_(k) {}
+        explicit Buffer(size_t k) : weight_(0), sorted_(false), k_(k) {
+            elements_.reserve(k_);
+        }
 
         Buffer(std::vector<ValueType>&& elements, size_t weight, bool sorted)
             : elements_(elements), weight_(weight), sorted_(sorted),
@@ -90,7 +92,8 @@ public:
             const Comparator& comparator, const SortAlgorithm& sort_algorithm)
             : b_(b), k_(k), context_(context), dia_id_(dia_id),
               comparator_(comparator), sort_algorithm_(sort_algorithm),
-              current_buffer_(b), empty_buffers_(b), minimum_level_(0) {
+              pool_buffer_(k), current_buffer_index_(b), empty_buffer_count_(b),
+              put_operations_(0), emit_operations_(0) {
         buffers_ = std::vector<Buffer>(b, Buffer(k));
         level_counters_.emplace_back(0);
         LOG << "New OnlineSampler(" << b_ << ", " << k_ << ")";
@@ -104,15 +107,15 @@ public:
      *  after Put operation
      */
     bool Put(const ValueType& value) {
-        if (current_buffer_ >= b_ ||
-                !buffers_[current_buffer_].HasCapacity()) {
+        if (current_buffer_index_ >= b_ ||
+                !buffers_[current_buffer_index_].HasCapacity()) {
             New();
         }
         if (stats_enabled) {
             put_operations_++;
         }
-        auto has_capacity = buffers_[current_buffer_].Put(value);
-        return has_capacity || empty_buffers_ > 0;
+        auto has_capacity = buffers_[current_buffer_index_].Put(value);
+        return has_capacity || empty_buffer_count_ > 0;
     }
 
     /*!
@@ -129,32 +132,49 @@ public:
     bool Collapse(const Emitter& emit) {
         timer_total_.Start();
         LOG << "Collapse()";
-        LOG << "Get level " << minimum_level_ << ".";
         std::vector<Buffer> level;
-        auto level_begin = b_ - empty_buffers_ -
-                level_counters_[minimum_level_];
-        for (size_t i = level_begin; i < b_ - empty_buffers_; i++) {
-            level.emplace_back(std::move(buffers_[i]));
+        size_t level_begin = 0;
+        size_t level_end = b_ - empty_buffer_count_;
+        size_t current_level = 0;
+        if (level_end < 2) {
+            LOG << "Nothing to collapse.";
+            return false;
         }
+        while (level.size() < 2) {
+            level_begin = b_ - empty_buffer_count_ -
+                               level_counters_[current_level];
+            for (size_t i = level_begin; i < level_end; i++) {
+                level.emplace_back(std::move(buffers_[i])); // TODO Move does not work as intended yet.
+            }
+            level_end = level_begin;
+            empty_buffer_count_ += level_counters_[current_level];
+            level_counters_[current_level] = 0;
+            current_level++;
+        }
+        current_buffer_index_ = b_;
 
         LOG << "Collapse " << level.size() << " buffers.";
-        Collapse(level, buffers_[level_begin], emit);
+        Collapse(level, pool_buffer_, emit);
+        buffers_[level_begin] = std::move(pool_buffer_);
+        empty_buffer_count_--;
+        size_t i = 0;
+        for (; i < level.size() - 1; i++) {
+            level[i].elements_.clear();
+            buffers_[level_begin + i + 1] = std::move(level[i]);
+        }
+        pool_buffer_ = std::move(level[i]);
+        pool_buffer_.elements_.clear();
 
-        empty_buffers_ += level.size() - 1;
-        level_counters_[minimum_level_] = 0;
-        current_buffer_ = b_;
-
-        minimum_level_++;
-        if (minimum_level_ >= level_counters_.size()) {
+        if (current_level >= level_counters_.size()) {
             level_counters_.emplace_back(1);
         } else {
-            level_counters_[minimum_level_]++;
+            level_counters_[current_level]++;
         }
-        assert(minimum_level_ < level_counters_.size());
+        assert(current_level < level_counters_.size());
 
-        LOG << empty_buffers_ << " buffers are now empty.";
+        LOG << empty_buffer_count_ << " buffers are now empty.";
         timer_total_.Stop();
-        return b_ - empty_buffers_ > 1;
+        return b_ - empty_buffer_count_ > 1;
     }
 
     /*!
@@ -168,8 +188,9 @@ public:
      * \returns Weight of elements
      */
     size_t GetSamples(std::vector<ValueType> &out_samples) {
+        // TODO Change to GetQuantiles with new partial buffer merge and pseudo collapse
+        // TODO Better parallel policy
         timer_total_.Start();
-        // TODO Pseudo concat to use all knowledge in the buffers?
         LOG << "GetSamples()";
         LOG << "Sort highest weighted buffer, if not sorted.";
         if (!buffers_[0].sorted_) {
@@ -301,10 +322,10 @@ private:
     SortAlgorithm sort_algorithm_;
 
     std::vector<Buffer> buffers_;
+    Buffer pool_buffer_;
     std::vector<size_t> level_counters_;
-    size_t current_buffer_;
-    size_t empty_buffers_;
-    size_t minimum_level_;
+    size_t current_buffer_index_;
+    size_t empty_buffer_count_;
 
     size_t put_operations_;
     size_t emit_operations_;
@@ -315,17 +336,13 @@ private:
 
     void New() {
         LOG << "New()";
-        current_buffer_ = std::accumulate(level_counters_.begin(),
+        current_buffer_index_ = std::accumulate(level_counters_.begin(),
                                           level_counters_.end(), (size_t) 0);
-        if (empty_buffers_ > 1) {
-            minimum_level_ = 0;
-        }
-        level_counters_[minimum_level_]++;
-        buffers_[current_buffer_].elements_.reserve(k_);
-        buffers_[current_buffer_].weight_ = 1;
-        buffers_[current_buffer_].sorted_ = false;
-        empty_buffers_--;
-        LOG << "New buffer is " << current_buffer_ << ", " << empty_buffers_
+        level_counters_[0]++;
+        buffers_[current_buffer_index_].weight_ = 1;
+        buffers_[current_buffer_index_].sorted_ = false;
+        empty_buffer_count_--;
+        LOG << "New buffer is " << current_buffer_index_ << ", " << empty_buffer_count_
             << " still empty.";
     }
 
