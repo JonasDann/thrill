@@ -58,8 +58,8 @@ TEST(OnlineSampler, IntUniFullSortedBufferSampling) {
         size_t k = 2778;
         size_t N_pow = 5;
         size_t N_p = ((size_t) (pow(10, N_pow) / (p * b * k)) + 1) * b * k;
-        core::OnlineSampler<int, Comparator, DefaultSortAlgorithm> sampler(b, k,
-                context, 0, comparator, sort_algorithm, false, 1);
+        core::OnlineSampler<int, Comparator, DefaultSortAlgorithm, false>
+                sampler(b, k, context, 0, comparator, sort_algorithm);
 
         // generate input sequence
         std::vector<int> sequence;

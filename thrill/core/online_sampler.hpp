@@ -37,12 +37,12 @@ template <
         typename ValueType,
         typename Comparator,
         typename SortAlgorithm,
+        bool NonUniformSampling = true,
         bool Stable = false>
 class OnlineSampler {
-    // TODO Implement non-uniform sampling
     using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of sampling
     //! stats
@@ -90,11 +90,11 @@ public:
      */
     OnlineSampler(size_t b, size_t k, Context& context, size_t dia_id,
             const Comparator& comparator, const SortAlgorithm& sort_algorithm,
-            bool non_uniform_sampling = true, size_t r = 1)
-            : b_(b), k_(k), non_uniform_sampling_(non_uniform_sampling), r_(r),
-              context_(context), dia_id_(dia_id), comparator_(comparator),
-              sort_algorithm_(sort_algorithm), pool_buffer_(k),
-              current_buffer_index_(b), empty_buffer_count_(b) {
+            size_t r = 1)
+            : b_(b), k_(k), r_(r), context_(context), dia_id_(dia_id),
+              comparator_(comparator), sort_algorithm_(sort_algorithm),
+              pool_buffer_(k), current_buffer_index_(b), empty_buffer_count_(b),
+              new_level_(0) {
         buffers_ = std::vector<Buffer>(b, Buffer(k));
         level_counters_.emplace_back(0);
         LOG << "New OnlineSampler(" << b_ << ", " << k_ << ")";
@@ -141,7 +141,7 @@ public:
         std::vector<Buffer> level;
         size_t level_begin = 0;
         size_t level_end = b_ - empty_buffer_count_;
-        size_t current_level = 0;
+        size_t current_level = new_level_;
         if (level_end < 2) {
             LOG << "Nothing to collapse.";
             return false;
@@ -173,6 +173,10 @@ public:
 
         if (current_level >= level_counters_.size()) {
             level_counters_.emplace_back(1);
+            if (NonUniformSampling) {
+                r_ *= 2;
+                new_level_++;
+            }
         } else {
             level_counters_[current_level]++;
         }
@@ -280,19 +284,6 @@ public:
         return weight_sum;
     }
 
-    /*!
-     * Returns currently highest weighted samples buffer that is stored in the
-     * local instance.
-     *
-     * \param out_samples Vector that will contain the local samples
-     *
-     * \returns Weight of elements
-     */
-    size_t GetLocalSamples(std::vector<ValueType> &out_samples) {
-        out_samples = buffers_[0].elements_;
-        return buffers_[0].weight_;
-    }
-
     void PrintStats() {
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
@@ -313,7 +304,6 @@ public:
 private:
     size_t b_;
     size_t k_;
-    bool non_uniform_sampling_;
     size_t r_;
 
     Context& context_;
@@ -327,6 +317,7 @@ private:
     std::vector<size_t> level_counters_;
     size_t current_buffer_index_;
     size_t empty_buffer_count_;
+    size_t new_level_;
 
     Timer timer_total_;
     Timer timer_sort_;
@@ -337,12 +328,12 @@ private:
         LOG << "New()";
         current_buffer_index_ = std::accumulate(level_counters_.begin(),
                                           level_counters_.end(), (size_t) 0);
-        level_counters_[0]++;
+        level_counters_[new_level_]++;
         buffers_[current_buffer_index_].weight_ = 1;
         buffers_[current_buffer_index_].sorted_ = false;
         empty_buffer_count_--;
-        LOG << "New buffer is " << current_buffer_index_ << ", " << empty_buffer_count_
-            << " still empty.";
+        LOG << "New buffer is " << current_buffer_index_ << ", "
+            << empty_buffer_count_ << " still empty.";
     }
 
     size_t GetTargetRank(size_t j, size_t weight) {
