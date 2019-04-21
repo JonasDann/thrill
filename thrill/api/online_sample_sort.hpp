@@ -107,15 +107,14 @@ public:
         if (!has_next_capacity) {
             LOG0 << "Collapse sampler buffers.";
             timer_sample_.Start();
-            sampler_.Collapse([&] (ValueType& value){
-                if (current_run_.size() >= run_capacity_) {
-                    timer_sample_.Stop();
-                    FinishCurrentRun();
-                    timer_sample_.Start();
-                }
-                current_run_.push_back(value);
-            });
+            sampler_.Collapse();
             timer_sample_.Stop();
+        }
+        current_run_.emplace_back(input);
+        if (current_run_.size() >= run_capacity_) {
+            timer_sample_.Stop();
+            FinishCurrentRun();
+            timer_sample_.Start();
         }
     }
 
@@ -142,29 +141,9 @@ public:
         bool is_collapsible;
         timer_sample_.Start();
         do {
-            // TODO Refactor to emit function
             LOG0 << "Collapse sampler buffers.";
-            is_collapsible = sampler_.Collapse([&] (ValueType& value){
-                if (current_run_.size() >= run_capacity_) {
-                    timer_sample_.Stop();
-                    FinishCurrentRun();
-                    timer_sample_.Start();
-                }
-                current_run_.push_back(value);
-            });
+            is_collapsible = sampler_.Collapse();
         } while(is_collapsible);
-
-        LOG << "Add " << k_ << " local samples to last run.";
-        std::vector<ValueType> samples;
-        sampler_.GetLocalSamples(samples);
-        for (auto sample : samples) {
-            if (current_run_.size() >= run_capacity_) {
-                timer_sample_.Stop();
-                FinishCurrentRun();
-                timer_sample_.Start();
-            }
-            current_run_.push_back(sample);
-        }
         timer_sample_.Stop();
         LOG << "Finish last run.";
         if (current_run_.size() > 0) {
@@ -218,7 +197,7 @@ public:
                 });
         LOG << "Add " << max_run_count - run_count << " dummy runs";
         while (run_files_.size() < max_run_count) {
-            run_files_.emplace_back(context_.template GetSampledFilePtr
+            run_files_.push_back(context_.template GetSampledFilePtr
                     <ValueType>(this));
         }
         run_count = max_run_count;
@@ -265,7 +244,7 @@ public:
             timer_global_communication.Stop();
 
             auto final_run_file = context_.GetFilePtr(this);
-            final_run_files_.emplace_back(final_run_file);
+            final_run_files_.push_back(final_run_file);
             data_stream->GetFile(final_run_file);
             local_items_ += final_run_file->num_items();
 
@@ -318,7 +297,7 @@ public:
             std::vector<data::File::Reader> file_readers;
             for (size_t i = 0; i < final_run_files_.size(); i++) {
                 LOG << "Run file " << i << " has size " << final_run_files_[i]->num_items();
-                file_readers.emplace_back(final_run_files_[i]->GetReader(consume, /* prefetch */ 0));
+                file_readers.push_back(final_run_files_[i]->GetReader(consume, /* prefetch */ 0));
             }
 
             StartPrefetch(file_readers, prefetch);
@@ -477,7 +456,7 @@ private:
 
         data_writers.reserve(k);
         while (data_writers.size() < k)
-            data_writers.emplace_back(data::MixStream::Writer());
+            data_writers.push_back(data::MixStream::Writer());
 
         std::swap(data_writers[actual_k - 1], data_writers[k - 1]);
 
@@ -566,7 +545,7 @@ private:
 
         // Write elements to file.
         LOG << "Write sorted run to file.";
-        run_files_.emplace_back(context_.template GetSampledFilePtr<ValueType>(
+        run_files_.push_back(context_.template GetSampledFilePtr<ValueType>(
                 this));
         timer_pre_op_file_io_.Start();
         auto current_run_file_writer = run_files_.back()->GetWriter();
@@ -595,9 +574,9 @@ private:
         auto empty_splitters = empty_element_count / step_size;
         auto initial_index = (empty_element_count % step_size) / 2;
         for (size_t i = 0; i < empty_splitters / 2; i++) {
-            splitters.emplace_back(samples[0], 0);
+            splitters.push_back(SampleIndexPair(samples[0], 0));
             if (is_final) {
-                final_splitters_.emplace_back(samples[0]);
+                final_splitters_.push_back(samples[0]);
             }
         }
         for (size_t i = 1; i < p_ - empty_splitters; i ++) {
@@ -609,16 +588,16 @@ private:
                 index++;
             }
             assert(index < samples.size());
-            splitters.emplace_back(SampleIndexPair(samples[index], index));
+            splitters.push_back(SampleIndexPair(samples[index], index));
             if (is_final) {
-                final_splitters_.emplace_back(samples[index]);
+                final_splitters_.push_back(samples[index]);
             }
         }
         while (splitters.size() < p_ - 1) {
-            splitters.emplace_back(SampleIndexPair(samples[samples.size() - 1],
+            splitters.push_back(SampleIndexPair(samples[samples.size() - 1],
                     std::numeric_limits<size_t>::max()));
             if (is_final) {
-                final_splitters_.emplace_back(samples[samples.size() - 1]);
+                final_splitters_.push_back(samples[samples.size() - 1]);
             }
         }
 
@@ -658,7 +637,7 @@ private:
                 SortWriteClearCurrentRun();
                 timer_pre_op_communication_.Start();
             }
-            current_run_.emplace_back(reader.template Next<ValueType>());
+            current_run_.push_back(reader.template Next<ValueType>());
         }
         timer_pre_op_communication_.Stop();
         if (current_run_.size() > 0) {
