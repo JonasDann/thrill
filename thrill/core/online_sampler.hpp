@@ -57,7 +57,7 @@ class OnlineSampler {
         size_t weight_;
         bool sorted_;
 
-        explicit Buffer(size_t k) : weight_(0), sorted_(false), k_(k) {
+        explicit Buffer(size_t k) : weight_(1), sorted_(false), k_(k) {
             elements_.reserve(k_);
         }
 
@@ -93,7 +93,7 @@ public:
             size_t r = 1)
             : b_(b), k_(k), r_(r), context_(context), dia_id_(dia_id),
               comparator_(comparator), sort_algorithm_(sort_algorithm),
-              pool_buffer_(k), current_buffer_index_(b), empty_buffer_count_(b),
+              partial_buffer_(k), pool_buffer_(k), empty_buffer_count_(b),
               new_level_(0) {
         buffers_ = std::vector<Buffer>(b, Buffer(k));
         level_counters_.emplace_back(0);
@@ -103,30 +103,29 @@ public:
     /*!
      * Put an element into the data structure. If the random sampling factor r
      * > 1, the value is put into a sample block where a random value is drawn
-     * from, if the sample block size reaches r. Thereafter the sample block is
+     * from, if the sample block size reaches r. Thereafter, the sample block is
      * cleared. If this returns false, Collapse has to be called.
      *
      * \returns True if the data structure still has capacity for more elements
      *  after Put operation
      */
     bool Put(const ValueType& value) {
-        if (current_buffer_index_ >= b_ ||
-                !buffers_[current_buffer_index_].HasCapacity()) {
-            New();
-        }
-
+        assert(empty_buffer_count_ > 0);
         bool has_capacity = true;
         if (r_ <= 1) {
-            has_capacity = buffers_[current_buffer_index_].Put(value);
+            has_capacity = partial_buffer_.Put(value);
         } else {
             sample_block_.emplace_back(value);
             if (sample_block_.size() >= r_) {
-                has_capacity = buffers_[current_buffer_index_].
-                        Put(sample_block_[0]);
+                has_capacity = partial_buffer_.
+                        Put(sample_block_[0]); // TODO randomize
                 sample_block_.clear();
             }
         }
-        return has_capacity || empty_buffer_count_ > 0;
+        if (!has_capacity) {
+            has_capacity = New();
+        }
+        return has_capacity;
     }
 
     /*!
@@ -138,42 +137,35 @@ public:
     bool Collapse() {
         timer_total_.Start();
         LOG << "Collapse()";
-        std::vector<Buffer> level;
-        size_t level_begin = 0;
+        size_t level_begin = b_ - empty_buffer_count_;
         size_t level_end = b_ - empty_buffer_count_;
         size_t current_level = new_level_;
         if (level_end < 2) {
             LOG << "Nothing to collapse.";
             return false;
         }
-        while (level.size() < 2) {
+        while (level_end - level_begin < 2) {
             level_begin = b_ - empty_buffer_count_ -
                                level_counters_[current_level];
-            for (size_t i = level_begin; i < level_end; i++) {
-                level.emplace_back(std::move(buffers_[i])); // TODO Move does not work as intended yet.
-            }
-            level_end = level_begin;
             empty_buffer_count_ += level_counters_[current_level];
             level_counters_[current_level] = 0;
             current_level++;
         }
-        current_buffer_index_ = b_;
 
-        LOG << "Collapse " << level.size() << " buffers.";
-        Collapse(level, pool_buffer_);
-        buffers_[level_begin] = std::move(pool_buffer_);
-        empty_buffer_count_--;
-        size_t i = 0;
-        for (; i < level.size() - 1; i++) {
-            level[i].elements_.clear();
-            buffers_[level_begin + i + 1] = std::move(level[i]);
+        LOG << "Collapse " << level_end - level_begin << " buffers.";
+        Collapse(buffers_.begin() + level_begin, buffers_.begin() + level_end,
+                 pool_buffer_);
+        for (auto i = level_begin; i < level_end; i++) {
+            buffers_[i].elements_.clear();
         }
-        pool_buffer_ = std::move(level[i]);
-        pool_buffer_.elements_.clear();
+        std::swap(buffers_[level_begin], pool_buffer_);
+        empty_buffer_count_--;
+
 
         if (current_level >= level_counters_.size()) {
             level_counters_.emplace_back(1);
             if (NonUniformSampling) {
+                // TODO Resample partial buffer
                 r_ *= 2;
                 new_level_++;
             }
@@ -209,7 +201,7 @@ public:
             buffers_[0].sorted_ = true;
         }
 
-        LOG << "Send weights and elements and receive elements in PE 0.";
+        LOG << "Send full and partial buffer to PE 0.";
         timer_communication_.Start();
         auto all_weights = context_.net.AllGather(buffers_[0].weight_);
         auto weight_sum = 0;
@@ -247,7 +239,7 @@ public:
 
             LOG << "Collapse buffers.";
             Buffer target_buffer(k_);
-            Collapse(buffers, target_buffer);
+            Collapse(buffers.begin(), buffers.end(), target_buffer);
 
             LOG << "Send resulting samples.";
             timer_communication_.Start();
@@ -313,9 +305,9 @@ private:
 
     std::vector<ValueType> sample_block_;
     std::vector<Buffer> buffers_;
+    Buffer partial_buffer_;
     Buffer pool_buffer_;
     std::vector<size_t> level_counters_;
-    size_t current_buffer_index_;
     size_t empty_buffer_count_;
     size_t new_level_;
 
@@ -324,16 +316,18 @@ private:
     Timer timer_communication_;
     Timer timer_merge_;
 
-    void New() {
+    bool New() {
         LOG << "New()";
-        current_buffer_index_ = std::accumulate(level_counters_.begin(),
+        assert(!partial_buffer_.HasCapacity());
+        auto next_index = std::accumulate(level_counters_.begin(),
                                           level_counters_.end(), (size_t) 0);
+        std::swap(buffers_[next_index], partial_buffer_);
         level_counters_[new_level_]++;
-        buffers_[current_buffer_index_].weight_ = 1;
-        buffers_[current_buffer_index_].sorted_ = false;
+        partial_buffer_.weight_ = 1;
+        partial_buffer_.sorted_ = false;
         empty_buffer_count_--;
-        LOG << "New buffer is " << current_buffer_index_ << ", "
-            << empty_buffer_count_ << " still empty.";
+        LOG << empty_buffer_count_ << " buffers are still empty.";
+        return empty_buffer_count_ > 0;
     }
 
     size_t GetTargetRank(size_t j, size_t weight) {
@@ -344,22 +338,27 @@ private:
         }
     }
 
-    void Collapse(std::vector<Buffer>& buffers, Buffer& target_buffer) {
+    void Collapse(typename std::vector<Buffer>::iterator buffers_begin,
+            typename std::vector<Buffer>::iterator buffers_end,
+            Buffer& target_buffer) {
         LOG << "Sort buffers and construct loser tree.";
-        LoserTree loser_tree(buffers.size(), comparator_);
+        auto buffers_size = buffers_end - buffers_begin;
+        LoserTree loser_tree(buffers_size, comparator_);
         size_t weight_sum = 0;
-        for (size_t i = 0; i < buffers.size(); i++) {
-            if (!buffers[i].sorted_) {
+        size_t i = 0;
+        for (auto it = buffers_begin; it != buffers_end; it++) {
+            if (!(*it).sorted_) {
                 timer_sort_.Start();
-                sort_algorithm_(buffers[i].elements_.begin(),
-                                buffers[i].elements_.end(), comparator_);
+                sort_algorithm_((*it).elements_.begin(),
+                                (*it).elements_.end(), comparator_);
                 timer_sort_.Stop();
-                buffers[i].sorted_ = true;
+                (*it).sorted_ = true;
             }
-            weight_sum += buffers[i].weight_;
-            loser_tree.insert_start(&buffers[i].elements_[0], i, false);
-            LOG << "[" << i << "] " << buffers[i].elements_.size() << "*"
-                 << buffers[i].weight_;
+            weight_sum += (*it).weight_;
+            loser_tree.insert_start(&(*it).elements_[0], i, false);
+            LOG << "[" << i << "] " << (*it).elements_.size() << "*"
+                 << (*it).weight_;
+            i++;
         }
         loser_tree.init();
 
@@ -367,14 +366,14 @@ private:
         target_buffer.sorted_ = true;
 
         size_t total_index = 0;
-        std::vector<size_t> positions(buffers.size(), 0);
+        std::vector<size_t> positions(buffers_size, 0);
 
         // Advance total_index for amount of empty elements and calculate number
         // of empty elements in target buffer.
         timer_merge_.Start();
-        for (size_t i = 0; i < buffers.size(); i++) {
-            size_t empty_elements = k_ - buffers[i].elements_.size();
-            total_index += empty_elements * buffers[i].weight_;
+        for (auto it = buffers_begin; it != buffers_end; it++) {
+            size_t empty_elements = k_ - (*it).elements_.size();
+            total_index += empty_elements * (*it).weight_;
         }
         size_t target_buffer_empty_element_count = total_index / weight_sum;
         total_index = (total_index % weight_sum) / 2;
@@ -384,18 +383,18 @@ private:
         LOG << "Merge buffers.";
         for (size_t j = 0; j < k_ - target_buffer_empty_element_count; j++) {
             size_t target_rank = GetTargetRank(j, weight_sum);
-            ValueType sample = buffers[0].elements_[0]; // Init removes warning
+            ValueType sample = (*buffers_begin).elements_[0]; // Init removes warning
             assert(total_index < target_rank);
             while (total_index < target_rank) {
                 auto minimum_index = loser_tree.min_source();
-                sample = buffers[minimum_index].
+                sample = (*(buffers_begin + minimum_index)).
                         elements_[positions[minimum_index]];
-                total_index += buffers[minimum_index].weight_;
+                total_index += (*(buffers_begin + minimum_index)).weight_;
                 positions[minimum_index]++;
                 auto has_next = positions[minimum_index] <
-                                buffers[minimum_index].elements_.size();
+                        (*(buffers_begin + minimum_index)).elements_.size();
                 loser_tree.delete_min_insert(
-                        has_next ? &buffers[minimum_index].
+                        has_next ? &(*(buffers_begin + minimum_index)).
                                 elements_[positions[minimum_index]] : nullptr,
                         !has_next);
             }
