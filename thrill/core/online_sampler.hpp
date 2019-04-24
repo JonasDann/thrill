@@ -51,6 +51,7 @@ class OnlineSampler {
     //! Timer or FakeTimer
     using Timer = common::StatsTimerBaseStopped<stats_enabled>;
 
+    // TODO Implement serialization
     class Buffer {
     public:
         std::vector<ValueType> elements_;
@@ -67,7 +68,7 @@ class OnlineSampler {
 
         bool Put(ValueType value) {
             assert(HasCapacity());
-            elements_.emplace_back(value);
+            elements_.push_back(value);
             return HasCapacity();
         }
 
@@ -96,7 +97,7 @@ public:
               partial_buffer_(k), pool_buffer_(k), empty_buffer_count_(b),
               new_level_(0) {
         buffers_ = std::vector<Buffer>(b, Buffer(k));
-        level_counters_.emplace_back(0);
+        level_counters_.push_back(0);
         LOG << "New OnlineSampler(" << b_ << ", " << k_ << ")";
     }
 
@@ -115,10 +116,10 @@ public:
         if (r_ <= 1) {
             has_capacity = partial_buffer_.Put(value);
         } else {
-            sample_block_.emplace_back(value);
+            sample_block_.push_back(value);
             if (sample_block_.size() >= r_) {
                 has_capacity = partial_buffer_.
-                        Put(sample_block_[0]); // TODO randomize
+                        Put(sample_block_[0]); // TODO Randomize
                 sample_block_.clear();
             }
         }
@@ -161,13 +162,12 @@ public:
         std::swap(buffers_[level_begin], pool_buffer_);
         empty_buffer_count_--;
 
-
         if (current_level >= level_counters_.size()) {
-            level_counters_.emplace_back(1);
+            level_counters_.push_back(1);
             if (NonUniformSampling) {
-                // TODO Resample partial buffer
                 r_ *= 2;
                 new_level_++;
+                ResampleBuffer(partial_buffer_, 1/2);
             }
         } else {
             level_counters_[current_level]++;
@@ -180,100 +180,162 @@ public:
     }
 
     /*!
-     * Communicates currently highest weighted samples buffer with all PEs and
-     * returns collapsed result. The samples vector does not have to be filled
-     * completely, when partially filled buffers were collapsed. This has to be
-     * handled accordingly.
+     * Collapses current buffers and communicates the result with PE 0 which
+     * selects splitters based on the quantiles given and communicates result
+     * with all PEs. This function does not alter the state of the data
+     * structure.
      *
-     * \param out_samples Vector that will contain the resulting samples
-     *
-     * \returns Weight of elements
+     * \param quantiles Vector that contains the quantiles
+     * \param out_splitters Vector that will contain the resulting splitters
      */
-    size_t GetSamples(std::vector<ValueType> &out_samples) {
-        // TODO Change to GetQuantiles with new partial buffer merge and pseudo collapse
-        // TODO Better parallel policy
+    void GetSplitters(std::vector<double>& quantiles,
+            std::vector<ValueType> &out_splitters) {
         timer_total_.Start();
         LOG << "GetSamples()";
-        LOG << "Sort highest weighted buffer, if not sorted.";
-        if (!buffers_[0].sorted_) {
-            sort_algorithm_(buffers_[0].elements_.begin(),
-                            buffers_[0].elements_.end(), comparator_);
-            buffers_[0].sorted_ = true;
-        }
+        LOG << "Collapse full buffers, but do not change state.";
+        Buffer local_target_buffer(k_);
+        Collapse(buffers_.begin(),
+                 buffers_.begin() + (b_ - empty_buffer_count_),
+                 local_target_buffer);
 
         LOG << "Send full and partial buffer to PE 0.";
         timer_communication_.Start();
-        auto all_weights = context_.net.AllGather(buffers_[0].weight_);
-        auto weight_sum = 0;
-        for (size_t i = 0; i < all_weights->size(); i++) {
-            weight_sum += all_weights->at(i);
-        }
-
-        auto sample_stream = context_.template GetNewStream<data::CatStream>(
+        auto stream = context_.template GetNewStream<data::CatStream>(
                 dia_id_);
-        auto sample_writers = sample_stream->GetWriters();
-        auto sample_readers = sample_stream->GetReaders();
+        auto writers = stream->GetWriters();
+        auto readers = stream->GetReaders();
 
-        for (auto element : buffers_[0].elements_) {
-            sample_writers[0].Put(element);
-        }
-        sample_writers[0].Close();
+        writers[0].Put(local_target_buffer);
+        writers[0].Put(partial_buffer_);
+        writers[0].Close();
         timer_communication_.Stop();
 
-        std::vector<ValueType> samples;
         if (context_.my_rank() == 0) {
             timer_communication_.Start();
-            LOG << "Construct " << context_.num_workers() << " buffers.";
-            std::vector<Buffer> buffers;
+            LOG << "Receive " << context_.num_workers() << " buffers.";
+            std::vector<Buffer> full_buffers;
+            std::vector<Buffer> partial_buffers;
             for (size_t p = 0; p < context_.num_workers(); p++) {
-                std::vector<ValueType> elements;
-                elements.reserve(k_);
-                while (sample_readers[p].HasNext()) {
-                    elements.emplace_back(
-                            sample_readers[p].template Next<ValueType>());
-                }
-                buffers.emplace_back(Buffer(std::move(elements),
-                                            all_weights->at(p), true));
+                full_buffers.push_back(readers[p].template Next<Buffer>());
+                partial_buffers.push_back(
+                        readers[p].template Next<Buffer>());
+                sort_algorithm_(partial_buffers.back().elements_.begin(),
+                        partial_buffers.back().elements_.end(), comparator_);
+                partial_buffers.back().sorted_ = true;
             }
             timer_communication_.Stop();
+
+            Buffer partial_buffer = std::move(partial_buffers[0]);
+            for (size_t p = 1; p < context_.num_workers(); p++) {
+                if (partial_buffers[p].elements_.size() > 0) {
+                    if (partial_buffer.weight_ < partial_buffers[p].weight_) {
+                        ResampleBuffer(partial_buffer,
+                                partial_buffer.weight_ /
+                                partial_buffers[p].weight_);
+                    } else {
+                        ResampleBuffer(partial_buffers[p],
+                                partial_buffers[p].weight_ /
+                                partial_buffer.weight_);
+                    }
+                    bool has_capacity;
+                    for (size_t i = 0; i < partial_buffers[p].elements_.size();
+                            i++) {
+                        has_capacity = partial_buffer.Put(
+                                partial_buffers[p].elements_[i]);
+                        if (!has_capacity) {
+                            sort_algorithm_(partial_buffer.elements_.begin(),
+                                            partial_buffer.elements_.end(),
+                                            comparator_);
+                            full_buffers.push_back(
+                                    std::move(partial_buffer));
+                            partial_buffer = std::move(partial_buffers[p]);
+                            partial_buffer.elements_.erase(
+                                    partial_buffer.elements_.begin(),
+                                    partial_buffer.elements_.begin() + i);
+                        }
+                    }
+                }
+            }
 
             LOG << "Collapse buffers.";
             Buffer target_buffer(k_);
-            Collapse(buffers.begin(), buffers.end(), target_buffer);
+            Collapse(full_buffers.begin(), full_buffers.end(), target_buffer);
 
-            LOG << "Send resulting samples.";
+            size_t partial_buffer_position = 0;
+            size_t target_buffer_position = 0;
+            size_t total_position = 0;
+            for (auto quantile : quantiles) {
+                auto target_rank = quantile * (k_ * target_buffer.weight_ +
+                        partial_buffer.elements_.size() *
+                        partial_buffer.weight_);
+                assert(target_rank < total_position);
+                ValueType splitter;
+                while (total_position < target_rank) {
+                    if (partial_buffer_position >=
+                            partial_buffer.elements_.size()) {
+                        size_t steps = (target_rank - total_position) /
+                                target_buffer.weight_;
+                        total_position += target_buffer.weight_ * steps;
+                        target_buffer_position += steps;
+                        if (total_position < target_rank) {
+                            total_position += target_buffer.weight_;
+                            target_buffer_position++;
+                        }
+                        splitter =
+                                target_buffer.elements_[target_buffer_position];
+                    } else if (target_buffer_position >=
+                               target_buffer.elements_.size()) {
+                        size_t steps = (target_rank - total_position) /
+                                partial_buffer.weight_;
+                        total_position += partial_buffer.weight_ * steps;
+                        partial_buffer_position += steps;
+                        if (total_position < target_rank) {
+                            total_position += partial_buffer.weight_;
+                            partial_buffer_position++;
+                        }
+                        splitter =
+                                target_buffer.elements_[target_buffer_position];
+                    } else {
+                        if (target_buffer.elements_[target_buffer_position] <
+                            partial_buffer.elements_[partial_buffer_position]) {
+                            total_position += target_buffer.weight_;
+                            target_buffer_position++;
+                            splitter = target_buffer.elements_[total_position];
+                        } else {
+                            total_position += partial_buffer.weight_;
+                            partial_buffer_position++;
+                            splitter = partial_buffer.elements_[total_position];
+                        }
+                    }
+                }
+                out_splitters.push_back(splitter);
+            }
+
+            LOG << "Send resulting quantiles.";
             timer_communication_.Start();
             for (size_t p = 1; p < context_.num_workers(); p++) {
-                for (auto element : target_buffer.elements_) {
-                    sample_writers[p].Put(element);
+                for (auto splitter : out_splitters) {
+                    writers[p].Put(splitter);
                 }
-                sample_writers[p].Close();
+                writers[p].Close();
             }
             timer_communication_.Stop();
-
-            samples = std::move(target_buffer.elements_);
         } else {
             LOG << "Close unused writers.";
             for (size_t p = 1; p < context_.num_workers(); p++) {
-                sample_writers[p].Close();
+                writers[p].Close();
             }
 
-            LOG << "Receive resulting samples.";
+            LOG << "Receive resulting quantiles.";
             timer_communication_.Start();
-            samples.reserve(k_);
-            while(sample_readers[0].HasNext()) {
-                samples.emplace_back(
-                        sample_readers[0].template Next<ValueType>());
+            while(readers[0].HasNext()) {
+                out_splitters.push_back(readers[0].template Next<ValueType>());
             }
             timer_communication_.Stop();
         }
 
-        sample_stream.reset();
-
-        LOG << "Return buffers.";
-        out_samples = std::move(samples);
+        stream.reset();
         timer_total_.Stop();
-        return weight_sum;
     }
 
     void PrintStats() {
@@ -368,22 +430,12 @@ private:
         size_t total_index = 0;
         std::vector<size_t> positions(buffers_size, 0);
 
-        // Advance total_index for amount of empty elements and calculate number
-        // of empty elements in target buffer.
         timer_merge_.Start();
-        for (auto it = buffers_begin; it != buffers_end; it++) {
-            size_t empty_elements = k_ - (*it).elements_.size();
-            total_index += empty_elements * (*it).weight_;
-        }
-        size_t target_buffer_empty_element_count = total_index / weight_sum;
-        total_index = (total_index % weight_sum) / 2;
-        LOG << "Target buffer has " << target_buffer_empty_element_count
-            << " empty elements and total index is " << total_index << ".";
-
         LOG << "Merge buffers.";
-        for (size_t j = 0; j < k_ - target_buffer_empty_element_count; j++) {
+        for (size_t j = 0; j < k_; j++) {
             size_t target_rank = GetTargetRank(j, weight_sum);
-            ValueType sample = (*buffers_begin).elements_[0]; // Init removes warning
+            ValueType sample =
+                    (*buffers_begin).elements_[0]; // Init removes warning
             assert(total_index < target_rank);
             while (total_index < target_rank) {
                 auto minimum_index = loser_tree.min_source();
@@ -401,6 +453,22 @@ private:
             target_buffer.Put(sample);
         }
         timer_merge_.Stop();
+    }
+
+    void ResampleBuffer(Buffer& buffer, double factor) {
+        assert((factor > 0) && (factor < 1));
+        assert(buffer.sorted_);
+
+        std::vector<ValueType> new_elements;
+        new_elements.reserve(k_);
+        auto new_size = buffer.elements_.size() * factor;
+        double step_size = 1 / factor;
+        for (size_t i = 0; i < new_size; i++) {
+            auto index =
+                    static_cast<size_t> (i * step_size + (step_size / 2));
+            new_elements.push_back(buffer.elements_[index]);
+        }
+        buffer.elements_ = std::move(new_elements);
     }
 };
 
