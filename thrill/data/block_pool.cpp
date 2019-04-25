@@ -45,7 +45,7 @@ static constexpr bool debug_alloc = false;
 static constexpr bool debug_pin = false;
 
 //! debug memory requests
-static constexpr bool debug_mem = true;
+static constexpr bool debug_mem = false;
 
 //! debug block eviction: evict, write complete, read complete
 static constexpr bool debug_em = false;

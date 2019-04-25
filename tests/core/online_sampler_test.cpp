@@ -77,7 +77,8 @@ TEST(OnlineSampler, IntUniFullSortedBufferSampling) {
             }
         }
 
-        auto global_sequence = context.net.AllReduce(sequence,
+        std::vector<int> global_sequence;
+        global_sequence = context.net.AllReduce(sequence,
                 common::VectorConcat<int>());
 
         std::sort(global_sequence.begin(), global_sequence.end(), comparator);

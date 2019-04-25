@@ -21,7 +21,6 @@
 namespace thrill {
 namespace core {
 
-// TODO Implement serialization
 template <typename ValueType>
 class Buffer {
 public:
@@ -80,7 +79,7 @@ template <
 class OnlineSampler {
     using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
-    static constexpr bool debug = false;
+    static constexpr bool debug = true;
 
     //! Set this variable to true to enable generation and output of sampling
     //! stats
@@ -106,6 +105,7 @@ public:
               comparator_(comparator), sort_algorithm_(sort_algorithm),
               partial_buffer_(k), pool_buffer_(k), empty_buffer_count_(b),
               new_level_(0) {
+        rng_ = std::mt19937(rd_());
         buffers_.reserve(b_);
         for (size_t i = 0; i < b_; i++) {
             Buffer<ValueType> buffer(k);
@@ -132,8 +132,9 @@ public:
         } else {
             sample_block_.push_back(value);
             if (sample_block_.size() >= r_) {
+                std::uniform_int_distribution<size_t> uni(0, r_);
                 has_capacity = partial_buffer_.
-                        Put(sample_block_[0]); // TODO Randomize
+                        Put(sample_block_[uni(rng_)]);
                 sample_block_.clear();
             }
         }
@@ -205,7 +206,7 @@ public:
     void GetSplitters(std::vector<double>& quantiles,
             std::vector<ValueType> &out_splitters) {
         timer_total_.Start();
-        LOG << "GetSamples()";
+        LOG << "GetSplitters()";
         LOG << "Collapse full buffers, but do not change state.";
         Buffer<ValueType> local_target_buffer(k_);
         Collapse(buffers_.begin(),
@@ -382,6 +383,9 @@ private:
     size_t dia_id_;
     Comparator comparator_;
     SortAlgorithm sort_algorithm_;
+
+    std::random_device rd_;
+    std::mt19937 rng_;
 
     std::vector<ValueType> sample_block_;
     std::vector<Buffer<ValueType>> buffers_;
