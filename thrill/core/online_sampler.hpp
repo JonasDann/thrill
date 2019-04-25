@@ -21,6 +21,41 @@
 namespace thrill {
 namespace core {
 
+// TODO Implement serialization
+template <typename ValueType>
+class Buffer {
+public:
+    std::vector<ValueType> elements_;
+    size_t weight_;
+    bool sorted_;
+    size_t k_;
+
+    explicit Buffer(size_t k) : weight_(1), sorted_(false), k_(k) {
+        elements_.reserve(k_);
+    }
+
+    Buffer(const Buffer& b) noexcept = delete;
+    Buffer& operator = (Buffer& b) noexcept = delete;
+
+    Buffer(Buffer&& b) noexcept = default;
+    Buffer& operator = (Buffer&& b) noexcept = default;
+
+    Buffer(std::vector<ValueType>&& elements, size_t weight, bool sorted,
+            size_t k)
+            : elements_(elements), weight_(weight), sorted_(sorted),
+              k_(k) {}
+
+    bool Put(ValueType value) {
+        assert(HasCapacity());
+        elements_.push_back(value);
+        return HasCapacity();
+    }
+
+    bool HasCapacity() {
+        return elements_.size() < k_;
+    }
+};
+
 /*!
  * A data structure that deterministically draws equidistant samples from a
  * stream of elements.
@@ -30,6 +65,9 @@ namespace core {
  * \tparam Comparator Type of the comparator
  *
  * \tparam SortAlgorithm Type of the local sort function
+ *
+ * \tparam NonUniformSampling Whether non uniform sampling technique should be
+ *  applied
  *
  * \tparam Stable Whether or not to use stable sorting mechanisms
  */
@@ -51,34 +89,6 @@ class OnlineSampler {
     //! Timer or FakeTimer
     using Timer = common::StatsTimerBaseStopped<stats_enabled>;
 
-    // TODO Implement serialization
-    class Buffer {
-    public:
-        std::vector<ValueType> elements_;
-        size_t weight_;
-        bool sorted_;
-
-        explicit Buffer(size_t k) : weight_(1), sorted_(false), k_(k) {
-            elements_.reserve(k_);
-        }
-
-        Buffer(std::vector<ValueType>&& elements, size_t weight, bool sorted)
-            : elements_(elements), weight_(weight), sorted_(sorted),
-              k_(elements.size()) {}
-
-        bool Put(ValueType value) {
-            assert(HasCapacity());
-            elements_.push_back(value);
-            return HasCapacity();
-        }
-
-        bool HasCapacity() {
-            return elements_.size() < k_;
-        }
-    private:
-        size_t k_;
-    };
-
 public:
     /*!
      * Online sampler constructor. The parameters b and k influence the
@@ -96,7 +106,11 @@ public:
               comparator_(comparator), sort_algorithm_(sort_algorithm),
               partial_buffer_(k), pool_buffer_(k), empty_buffer_count_(b),
               new_level_(0) {
-        buffers_ = std::vector<Buffer>(b, Buffer(k));
+        buffers_.reserve(b_);
+        for (size_t i = 0; i < b_; i++) {
+            Buffer<ValueType> buffer(k);
+            buffers_.push_back(std::move(buffer));
+        }
         level_counters_.push_back(0);
         LOG << "New OnlineSampler(" << b_ << ", " << k_ << ")";
     }
@@ -193,7 +207,7 @@ public:
         timer_total_.Start();
         LOG << "GetSamples()";
         LOG << "Collapse full buffers, but do not change state.";
-        Buffer local_target_buffer(k_);
+        Buffer<ValueType> local_target_buffer(k_);
         Collapse(buffers_.begin(),
                  buffers_.begin() + (b_ - empty_buffer_count_),
                  local_target_buffer);
@@ -213,19 +227,20 @@ public:
         if (context_.my_rank() == 0) {
             timer_communication_.Start();
             LOG << "Receive " << context_.num_workers() << " buffers.";
-            std::vector<Buffer> full_buffers;
-            std::vector<Buffer> partial_buffers;
+            std::vector<Buffer<ValueType>> full_buffers;
+            std::vector<Buffer<ValueType>> partial_buffers;
             for (size_t p = 0; p < context_.num_workers(); p++) {
-                full_buffers.push_back(readers[p].template Next<Buffer>());
-                partial_buffers.push_back(
-                        readers[p].template Next<Buffer>());
+                full_buffers.push_back(std::move(
+                        readers[p].template Next<Buffer<ValueType>>()));
+                partial_buffers.push_back(std::move(
+                        readers[p].template Next<Buffer<ValueType>>()));
                 sort_algorithm_(partial_buffers.back().elements_.begin(),
                         partial_buffers.back().elements_.end(), comparator_);
                 partial_buffers.back().sorted_ = true;
             }
             timer_communication_.Stop();
 
-            Buffer partial_buffer = std::move(partial_buffers[0]);
+            Buffer<ValueType> partial_buffer = std::move(partial_buffers[0]);
             for (size_t p = 1; p < context_.num_workers(); p++) {
                 if (partial_buffers[p].elements_.size() > 0) {
                     if (partial_buffer.weight_ < partial_buffers[p].weight_) {
@@ -242,10 +257,12 @@ public:
                             i++) {
                         has_capacity = partial_buffer.Put(
                                 partial_buffers[p].elements_[i]);
+                        partial_buffer.sorted_ = false;
                         if (!has_capacity) {
                             sort_algorithm_(partial_buffer.elements_.begin(),
                                             partial_buffer.elements_.end(),
                                             comparator_);
+                            partial_buffer.sorted_ = true;
                             full_buffers.push_back(
                                     std::move(partial_buffer));
                             partial_buffer = std::move(partial_buffers[p]);
@@ -256,55 +273,56 @@ public:
                     }
                 }
             }
+            if (!partial_buffer.sorted_) {
+                sort_algorithm_(partial_buffer.elements_.begin(),
+                                partial_buffer.elements_.end(), comparator_);
+            }
 
             LOG << "Collapse buffers.";
-            Buffer target_buffer(k_);
+            Buffer<ValueType> target_buffer(k_);
             Collapse(full_buffers.begin(), full_buffers.end(), target_buffer);
 
-            size_t partial_buffer_position = 0;
-            size_t target_buffer_position = 0;
+            size_t sequence_length = k_ * target_buffer.weight_ +
+                                     partial_buffer.elements_.size() *
+                                     partial_buffer.weight_;
+            std::vector<Buffer<ValueType>> remaining_buffers;
+            remaining_buffers.push_back(std::move(target_buffer));
+            if (partial_buffer.elements_.size() > 0) {
+                remaining_buffers.push_back(std::move(partial_buffer));
+            }
+            std::vector<size_t> positions(remaining_buffers.size(), 0);
             size_t total_position = 0;
             for (auto quantile : quantiles) {
-                auto target_rank = quantile * (k_ * target_buffer.weight_ +
-                        partial_buffer.elements_.size() *
-                        partial_buffer.weight_);
-                assert(target_rank < total_position);
+                auto target_rank = quantile * sequence_length;
+                assert(target_rank <= total_position);
+
                 ValueType splitter;
                 while (total_position < target_rank) {
-                    if (partial_buffer_position >=
-                            partial_buffer.elements_.size()) {
+                    size_t minimum_index = 0;
+                    if (remaining_buffers.size() > 1 &&
+                        remaining_buffers[1].elements_[positions[1]] <
+                        remaining_buffers[0].elements_[positions[0]]) {
+                        minimum_index = 1;
+                    }
+
+                    if (remaining_buffers.size() < 2) {
                         size_t steps = (target_rank - total_position) /
-                                target_buffer.weight_;
-                        total_position += target_buffer.weight_ * steps;
-                        target_buffer_position += steps;
-                        if (total_position < target_rank) {
-                            total_position += target_buffer.weight_;
-                            target_buffer_position++;
-                        }
-                        splitter =
-                                target_buffer.elements_[target_buffer_position];
-                    } else if (target_buffer_position >=
-                               target_buffer.elements_.size()) {
-                        size_t steps = (target_rank - total_position) /
-                                partial_buffer.weight_;
-                        total_position += partial_buffer.weight_ * steps;
-                        partial_buffer_position += steps;
-                        if (total_position < target_rank) {
-                            total_position += partial_buffer.weight_;
-                            partial_buffer_position++;
-                        }
-                        splitter =
-                                target_buffer.elements_[target_buffer_position];
+                                       remaining_buffers[0].weight_;
+                        total_position += remaining_buffers[0].weight_ * steps;
+                        positions[0] += steps;
+                        splitter = remaining_buffers[0].
+                                elements_[positions[0] - 1];
                     } else {
-                        if (target_buffer.elements_[target_buffer_position] <
-                            partial_buffer.elements_[partial_buffer_position]) {
-                            total_position += target_buffer.weight_;
-                            target_buffer_position++;
-                            splitter = target_buffer.elements_[total_position];
-                        } else {
-                            total_position += partial_buffer.weight_;
-                            partial_buffer_position++;
-                            splitter = partial_buffer.elements_[total_position];
+                        splitter = remaining_buffers[minimum_index].
+                                elements_[positions[minimum_index]];
+                        total_position += remaining_buffers[minimum_index].
+                                weight_;
+                        positions[minimum_index]++;
+                        if (positions[minimum_index] >=
+                                remaining_buffers[minimum_index].elements_.
+                                size()) {
+                            remaining_buffers.erase(
+                                    remaining_buffers.begin() + minimum_index);
                         }
                     }
                 }
@@ -366,9 +384,9 @@ private:
     SortAlgorithm sort_algorithm_;
 
     std::vector<ValueType> sample_block_;
-    std::vector<Buffer> buffers_;
-    Buffer partial_buffer_;
-    Buffer pool_buffer_;
+    std::vector<Buffer<ValueType>> buffers_;
+    Buffer<ValueType> partial_buffer_;
+    Buffer<ValueType> pool_buffer_;
     std::vector<size_t> level_counters_;
     size_t empty_buffer_count_;
     size_t new_level_;
@@ -400,9 +418,10 @@ private:
         }
     }
 
-    void Collapse(typename std::vector<Buffer>::iterator buffers_begin,
-            typename std::vector<Buffer>::iterator buffers_end,
-            Buffer& target_buffer) {
+    void Collapse(
+            typename std::vector<Buffer<ValueType>>::iterator buffers_begin,
+            typename std::vector<Buffer<ValueType>>::iterator buffers_end,
+            Buffer<ValueType>& target_buffer) {
         LOG << "Sort buffers and construct loser tree.";
         auto buffers_size = buffers_end - buffers_begin;
         LoserTree loser_tree(buffers_size, comparator_);
@@ -455,7 +474,7 @@ private:
         timer_merge_.Stop();
     }
 
-    void ResampleBuffer(Buffer& buffer, double factor) {
+    void ResampleBuffer(Buffer<ValueType>& buffer, double factor) {
         assert((factor > 0) && (factor < 1));
         assert(buffer.sorted_);
 
@@ -473,6 +492,31 @@ private:
 };
 
 } // namespace core
+
+namespace data {
+
+template <typename Archive, typename T>
+struct Serialization<Archive, core::Buffer<T>> {
+    static void Serialize(const core::Buffer<T>& b, Archive& ar) {
+        Serialization<Archive, std::vector<T>>::Serialize(b.elements_, ar);
+        Serialization<Archive, size_t>::Serialize(b.weight_, ar);
+        Serialization<Archive, bool>::Serialize(b.sorted_, ar);
+        Serialization<Archive, size_t>::Serialize(b.k_, ar);
+    }
+
+    static core::Buffer<T> Deserialize(Archive& ar) {
+        std::vector<T> elements =
+                Serialization<Archive, std::vector<T>>::Deserialize(ar);
+        size_t weight = Serialization<Archive, size_t>::Deserialize(ar);
+        bool sorted = Serialization<Archive, bool>::Deserialize(ar);
+        size_t k = Serialization<Archive, size_t>::Deserialize(ar);
+        return core::Buffer<T>(std::move(elements), weight, sorted, k);
+    }
+    static constexpr bool   is_fixed_size = false;
+    static constexpr size_t fixed_size = 0;
+};
+
+} // namespace data
 } // namespace thrill
 
 #endif // !THRILL_CORE_ONLINE_SAMPLER_HEADER
