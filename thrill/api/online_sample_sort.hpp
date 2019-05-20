@@ -112,9 +112,7 @@ public:
         }
         current_run_.emplace_back(input);
         if (current_run_.size() >= run_capacity_) {
-            timer_sample_.Stop();
             FinishCurrentRun();
-            timer_sample_.Start();
         }
     }
 
@@ -176,7 +174,6 @@ public:
     void Execute() final {
         Timer timer_main_op;
         Timer timer_global_splitter;
-        Timer timer_global_communication;
         LOG << "Phase: Global Redistribution";
         timer_main_op.Start();
 
@@ -230,10 +227,10 @@ public:
                 << run_files_[run_index]->num_items()
                 << " elements will stay local.";
 
-            timer_global_communication.Start();
+            timer_global_communication_.Start();
             data_stream->template Scatter<ValueType>(*run_files_[run_index],
                                                      run_offsets, true);
-            timer_global_communication.Stop();
+            timer_global_communication_.Stop();
 
             auto final_run_file = context_.GetFilePtr(this);
             final_run_files_.push_back(final_run_file);
@@ -256,7 +253,7 @@ public:
                     timer_global_splitter.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
                     "OnlineSampleSort() main op communication timer",
-                    timer_global_communication.SecondsDouble());
+                    timer_global_communication_.SecondsDouble());
         }
     }
 
@@ -275,6 +272,9 @@ public:
     void PushData(bool consume) final {
         // TODO Partial multi way merge, when there are too many runs
         // TODO Remove dummy runs, if still empty
+        Timer timer_push_data;
+        timer_push_data.Start();
+
         if (final_run_files_.size() == 0) {
             // nothing to push
         }
@@ -300,6 +300,7 @@ public:
 
 
             LOG << "Merging " << final_run_files_.size() << " files with prefetch " << prefetch << ".";
+            timer_merge_.Start();
             ValueType first_element;
             if (debug && file_merge_tree.HasNext()) {
                 first_element = file_merge_tree.Next();
@@ -313,8 +314,46 @@ public:
                     last_element = next;
                 }
             }
+            timer_merge_.Stop();
             LOG << "Finished merging (first element: " << first_element
                 << ", last element: " << last_element << ").";
+        }
+        timer_push_data.Stop();
+        timer_total_.Stop();
+
+        if (stats_enabled) {
+            size_t p = context_.num_workers();
+            size_t total_time = context_.net.AllReduce(
+                    timer_total_.Milliseconds()) / p;
+            double sort = (double) context_.net.AllReduce(
+                    timer_sort_.Milliseconds()) / p;
+            double sample = (double) context_.net.AllReduce(
+                    timer_sample_.Milliseconds()) / p;
+            double pre_op_communication = (double) context_.net.AllReduce(
+                    timer_pre_op_communication_.Milliseconds()) / p;
+            double merge = (double) context_.net.AllReduce(
+                    timer_merge_.Milliseconds()) / p;
+            double partition = (double) context_.net.AllReduce(
+                    timer_partition_.Milliseconds()) / p;
+            double run_formation = (double) context_.net.AllReduce(
+                    timer_pre_op_.Milliseconds()) / p;
+            double global_communication = (double) context_.net.AllReduce(
+                    timer_global_communication_.Milliseconds()) / p;
+            double final_merge = (double) context_.net.AllReduce(
+                    timer_push_data.Milliseconds()) / p;
+            double other = total_time - sort - pre_op_communication -
+                           global_communication - merge - sample - partition;
+            if (context_.my_rank() == 0) {
+                LOG1 << "RESULT " << "operation=online_sample_sort"
+                     << " total_time=" << total_time << " sort=" << sort
+                     << " merge=" << merge << " sample=" << sample
+                     << " communication=" << pre_op_communication + global_communication
+                     << " partition=" << partition
+                     << " other=" << other << " run_formation=" << run_formation
+                     << " global_communication=" << global_communication
+                     << " final_merge=" << final_merge
+                     << " workers=" << p; //<< " result_size=" << result_size;
+            }
         }
     }
 
@@ -376,11 +415,17 @@ private:
     //! time spent in partitioning
     Timer timer_partition_;
 
+    //! time spent in merging
+    Timer timer_merge_;
+
     //! time spent in PreOp in communication
     Timer timer_pre_op_communication_;
 
     //! time spent in PreOp in file io
     Timer timer_pre_op_file_io_;
+
+    //! time spent in MainOp in communication
+    Timer timer_global_communication_;
 
     //! total time spent
     Timer timer_total_;
