@@ -562,7 +562,7 @@ private:
         }
 
         timer_sample_.Start();
-        sampler_.GetSplicd gi   tters(quantiles, splitters);
+        sampler_.GetSplitters(quantiles, splitters);
         timer_sample_.Stop();
 
         // Get the ceiling of log(num_total_workers), as SSSS needs 2^n buckets.
