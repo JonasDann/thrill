@@ -204,7 +204,7 @@ public:
      * \param out_splitters Vector that will contain the resulting splitters
      */
     void GetSplitters(std::vector<double>& quantiles,
-            std::vector<ValueType> &out_splitters) {
+            std::vector<SampleIndexPair> &out_splitters) {
         timer_total_.Start();
         LOG << "GetSplitters()";
         LOG << "Collapse full buffers, but do not change state.";

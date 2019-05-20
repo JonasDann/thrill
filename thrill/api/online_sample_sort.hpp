@@ -137,14 +137,6 @@ public:
     }
 
     void StopPreOp(size_t /* id */) final {
-        LOG << "Collapse rest of buffers.";
-        bool is_collapsible;
-        timer_sample_.Start();
-        do {
-            LOG0 << "Collapse sampler buffers.";
-            is_collapsible = sampler_.Collapse();
-        } while(is_collapsible);
-        timer_sample_.Stop();
         LOG << "Finish last run.";
         if (current_run_.size() > 0) {
             FinishCurrentRun(true);
@@ -561,45 +553,17 @@ private:
         LOG << "Finish current run.";
 
         LOG << "Select " << p_ - 1 << " splitters.";
-        timer_sample_.Start();
-        std::vector<ValueType> samples;
-        sampler_.GetSamples(samples);
-        timer_sample_.Stop();
-
-        std::vector<SampleIndexPair> splitters;
+        std::vector<ValueType> splitters;
         splitters.reserve(p_ - 1);
-        auto step_size = k_ / p_;
-        auto remainder = k_ % p_;
-        auto empty_element_count = k_ - samples.size();
-        auto empty_splitters = empty_element_count / step_size;
-        auto initial_index = (empty_element_count % step_size) / 2;
-        for (size_t i = 0; i < empty_splitters / 2; i++) {
-            splitters.push_back(SampleIndexPair(samples[0], 0));
-            if (is_final) {
-                final_splitters_.push_back(samples[0]);
-            }
+        std::vector<double> quantiles;
+        quantiles.reserve(p_ - 1);
+        for (size_t i = 0; i < p_ - 1; i++) {
+            quantiles.emplace_back(static_cast<double>(i + 1) * (1.0 / p_));
         }
-        for (size_t i = 1; i < p_ - empty_splitters; i ++) {
-            auto index = i * step_size;
-            if (i == 1) {
-                index -= initial_index;
-            }
-            if (i <= remainder) {
-                index++;
-            }
-            assert(index < samples.size());
-            splitters.push_back(SampleIndexPair(samples[index], index));
-            if (is_final) {
-                final_splitters_.push_back(samples[index]);
-            }
-        }
-        while (splitters.size() < p_ - 1) {
-            splitters.push_back(SampleIndexPair(samples[samples.size() - 1],
-                    std::numeric_limits<size_t>::max()));
-            if (is_final) {
-                final_splitters_.push_back(samples[samples.size() - 1]);
-            }
-        }
+
+        timer_sample_.Start();
+        sampler_.GetSplicd gi   tters(quantiles, splitters);
+        timer_sample_.Stop();
 
         // Get the ceiling of log(num_total_workers), as SSSS needs 2^n buckets.
         size_t log_tree_size = tlx::integer_log2_ceil(p_);
@@ -646,6 +610,10 @@ private:
         }
 
         data_stream.reset();
+
+        if (is_final) {
+            final_splitters_ = std::move(splitters);
+        }
     }
 };
 
