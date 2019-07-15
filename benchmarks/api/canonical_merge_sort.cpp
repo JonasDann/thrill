@@ -14,7 +14,6 @@
 #include <thrill/api/all_gather.hpp>
 #include <thrill/api/canonical_merge_sort.hpp>
 #include <thrill/common/logger.hpp>
-#include <thrill/common/stats_timer.hpp>
 #include <tlx/cmdline_parser.hpp>
 
 #include <limits>
@@ -44,10 +43,9 @@ int main(int argc, char *argv[]) {
     tlx::CmdlineParser clp;
 
     int iterations;
-    clp.add_param_int("i", iterations, "Iterations");
+    clp.add_param_int("i", iterations, "Iterations.");
 
     uint64_t size;
-
     clp.add_param_bytes("size", size,
                         "Amount of data transferred between peers (example: 1 GiB).");
 

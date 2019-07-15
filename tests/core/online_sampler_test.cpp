@@ -16,7 +16,7 @@
 
 using namespace thrill; // NOLINT
 
-using Comparator = std::less<int>;
+using Comparator = std::less<>;
 
 class DefaultSortAlgorithm
 {

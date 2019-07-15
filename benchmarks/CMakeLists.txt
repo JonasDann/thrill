@@ -10,6 +10,7 @@
 
 thrill_build_prog(core/golomb_code_benchmark)
 thrill_build_prog(core/duplicates_speedup_benchmark)
+thrill_build_prog(core/sampling_benchmark)
 
 thrill_build_prog(hashtable/bench_hashtable)
 thrill_build_prog(hashtable/generate_data)
