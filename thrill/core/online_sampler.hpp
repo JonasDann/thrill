@@ -79,7 +79,7 @@ template <
 class OnlineSampler {
     using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of sampling
     //! stats
@@ -204,7 +204,7 @@ public:
      * \param out_splitters Vector that will contain the resulting splitters
      */
     void GetSplitters(std::vector<double>& quantiles,
-            std::vector<SampleIndexPair> &out_splitters) {
+            std::vector<ValueType> &out_splitters) {
         timer_total_.Start();
         LOG << "GetSplitters()";
         LOG << "Collapse full buffers, but do not change state.";
@@ -295,7 +295,7 @@ public:
             size_t total_position = 0;
             for (auto quantile : quantiles) {
                 auto target_rank = quantile * sequence_length;
-                assert(target_rank <= total_position);
+                assert(target_rank >= total_position);
 
                 ValueType splitter;
                 while (total_position < target_rank) {
@@ -479,7 +479,7 @@ private:
     }
 
     void ResampleBuffer(Buffer<ValueType>& buffer, double factor) {
-        assert((factor > 0) && (factor < 1));
+        assert((factor > 0) && (factor <= 1));
         assert(buffer.sorted_);
 
         std::vector<ValueType> new_elements;

@@ -36,7 +36,7 @@ double calculate_error(std::vector<Type>& sequence, std::vector<Type>& samples) 
     float error = 0;
     int actual_rank = 0;
     for (size_t j = 0; j < k; j++) {
-        int target_rank = (n / k) * (j + 1);
+        int target_rank = (n / (k + 1)) * (j + 1);
         while (sequence[actual_rank] < samples[j]) {
             actual_rank++;
         }
@@ -69,19 +69,21 @@ int main(int argc, char *argv[]) {
     std::mt19937 rng(rd());
     std::uniform_int_distribution<int> distribution;
 
-    auto generator = [&rng, &distribution](int i){return i;};
+    auto generator = [&rng, &distribution](int){return distribution(rng);};
 
     // TODO Generators
 
     api::Run(
             [&iterations, &n, &generator, &rng](api::Context &ctx) {
-                for (int i = 0; i < iterations; i++) {
-                    std::vector<std::vector<Type>> rs_samples_list;
-                    std::vector<std::vector<Type>> os_samples_list;
+                auto num_splitters = ctx.num_workers() - 1;
 
-                    std::vector<Type> rs_samples;
+                for (int i = 0; i < iterations; i++) {
+                    std::vector<std::vector<Type>> rs_splitters_list;
+                    std::vector<std::vector<Type>> os_splitters_list;
+
+                    std::vector<Type> rs_samp;
                     common::ReservoirSamplingGrow<Type, std::mt19937> rs(
-                            rs_samples, rng);
+                            rs_samp, rng);
 
                     core::OnlineSampler
                             <Type, Comparator, DefaultSortAlgorithm, false>
@@ -100,25 +102,38 @@ int main(int argc, char *argv[]) {
                             os.Collapse();
                         }
 
-                        if (/*ctx.my_rank() == 0 &&*/ j % static_cast<int>(n / 10.0) == 0 || j == n - 1) {
+                        if (/*ctx.my_rank() == 0 &&*/ j % static_cast<int>(n / 10.0) == n / 10.0 - 1) {
                             LOG1 << "draw samples";
-                            std::vector<Type> os_samples;
-                            os.GetSamples(os_samples);
-                            os_samples_list.push_back(os_samples);
-                            rs_samples_list.push_back(rs.samples());
-                            std::sort(rs_samples_list.back().begin(),
-                                    rs_samples_list.back().end());
+                            std::vector<double> quantiles;
+                            quantiles.reserve(num_splitters);
+                            for (size_t s = 0; s < num_splitters; s++) {
+                                quantiles.emplace_back(static_cast<double>(s + 1) / (num_splitters + 1));
+                            }
+                            std::vector<Type> os_splitters;
+                            os.GetSplitters(quantiles, os_splitters);
+                            os_splitters_list.push_back(os_splitters);
+                            std::vector<Type> rs_samples;
+                            rs_samples = rs.samples();
+                            std::sort(rs_samples.begin(), rs_samples.end());
+                            //TODO exchange
+                            std::vector<Type> rs_splitters;
+                            for (size_t s = 0; s < num_splitters; s++) {
+                                rs_splitters.push_back(rs_samples[
+                                        static_cast<double>(rs_samples.size()) *
+                                        quantiles[s]]);
+                            }
+                            rs_splitters_list.push_back(rs_splitters);
                         }
                     }
 
                     if (ctx.my_rank() == 0) {
                         LOG1 << "iteration " << i;
                         std::sort(sequence.begin(), sequence.end());
-                        for (size_t x = 1; x < rs_samples_list.size(); x++) {
+                        for (size_t x = 0; x < rs_splitters_list.size(); x++) {
                             auto rs_error = calculate_error(sequence,
-                                                            rs_samples_list[x]);
+                                                            rs_splitters_list[x]);
                             auto os_error = calculate_error(sequence,
-                                                            os_samples_list[x]);
+                                                            os_splitters_list[x]);
                             LOG1 << rs_error << "\t" << os_error;
                         }
                     }
