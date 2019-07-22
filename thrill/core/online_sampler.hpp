@@ -307,8 +307,8 @@ public:
                     }
 
                     if (remaining_buffers.size() < 2) {
-                        size_t steps = (target_rank - total_position) /
-                                       remaining_buffers[0].weight_;
+                        size_t steps = std::max((target_rank - total_position) /
+                                       remaining_buffers[0].weight_, 1.0);
                         total_position += remaining_buffers[0].weight_ * steps;
                         positions[0] += steps;
                         splitter = remaining_buffers[0].
