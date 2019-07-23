@@ -379,6 +379,9 @@ private:
     size_t k_;
     size_t r_;
 
+    // alternating target rank bias, as described in original paper
+    size_t even_bias_ = 0;
+
     Context& context_;
     size_t dia_id_;
     Comparator comparator_;
@@ -416,7 +419,7 @@ private:
 
     size_t GetTargetRank(size_t j, size_t weight) {
         if (weight % 2 == 0) { // even
-            return j * weight + (weight + 2 * (j % 2)) / 2;
+            return j * weight + weight / 2 + even_bias_;
         } else { // uneven
             return j * weight + (weight + 1) / 2;
         }
@@ -476,6 +479,14 @@ private:
             target_buffer.Put(sample);
         }
         timer_merge_.Stop();
+
+        if (weight_sum % 2 == 0) {
+            if (even_bias_) {
+                even_bias_ = 0;
+            } else {
+                even_bias_ = 1;
+            }
+        }
     }
 
     void ResampleBuffer(Buffer<ValueType>& buffer, double factor) {
