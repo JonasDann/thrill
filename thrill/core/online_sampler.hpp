@@ -203,7 +203,7 @@ public:
      * \param quantiles Vector that contains the quantiles
      * \param out_splitters Vector that will contain the resulting splitters
      */
-    void GetSplitters(std::vector<double>& quantiles,
+    void GetSplitters(const std::vector<double>& quantiles,
             std::vector<ValueType> &out_splitters) {
         timer_total_.Start();
         LOG << "GetSplitters()";
