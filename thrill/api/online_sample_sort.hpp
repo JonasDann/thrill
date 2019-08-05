@@ -570,24 +570,31 @@ private:
         size_t tree_size = size_t(1) << log_tree_size;
         std::vector<ValueType> tree(tree_size + 1);
 
+        std::vector<SampleIndexPair> splitters_with_indices;
+        splitters_with_indices.reserve(tree_size);
+        for (size_t i = 0; i < p_ - 1; i++) {
+            splitters_with_indices.push_back(SampleIndexPair(splitters[i],
+                    (i + 1) * current_run_.size() / p_));
+        }
+
         // Add sentinel splitters.
         for (size_t i = p_; i < tree_size; i++) {
-            splitters.push_back(splitters.back());
+            splitters_with_indices.push_back(splitters_with_indices.back());
         }
 
         // Build tree.
         LOG << "Build tree of size " << tree_size << " with height " 
             << log_tree_size << ".";
         TreeBuilder(tree.data(),
-                    splitters.data(),
-                    splitters.size());
+                    splitters_with_indices.data(),
+                    splitters_with_indices.size());
 
         // Partition.
         LOG << "Partition and communicate " << current_run_.size() << " elements.";
         auto data_stream = context_.template GetNewStream<data::MixStream>(
                 this->dia_id());
         TransmitItems(tree.data(), tree_size, log_tree_size, p_,
-                splitters.data(), data_stream);
+                splitters_with_indices.data(), data_stream);
         current_run_.clear();
 
         // Receive elements and sort.
