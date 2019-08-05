@@ -60,8 +60,8 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
     using SampleIndexPair = std::pair<ValueType, size_t>;
     using LocalRanks = std::vector<std::vector<size_t>>;
 
-    const size_t b_ = 10;
-    const size_t k_ = 6000;
+    const size_t b_ = 5;
+    const size_t k_ = 60000;
     size_t run_capacity_;
 
 public:
@@ -340,7 +340,7 @@ private:
     //! \{
 
     //! Online sampler
-    core::OnlineSampler<ValueType, Comparator, SortAlgorithm> sampler_;
+    core::OnlineSampler<ValueType, Comparator, SortAlgorithm, false> sampler_;
     //! Current run values that are partitioned, redistributed and sorted when
     //! capacity is reached
     std::vector<ValueType> current_run_;
