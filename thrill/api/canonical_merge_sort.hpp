@@ -494,53 +494,59 @@ private:
         }
         run_count = max_run_count;*/
 
-        LOG << "Calculate " << splitter_count << " splitters for " << run_count
+        if (run_count > 1) {
+            LOG << "Calculate " << splitter_count << " splitters for " << run_count
             << " runs each.";
-        LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
-        std::vector<FileSequenceAdapter> run_file_adapters(run_count);
-        for (size_t i = 0; i < run_count; i++) {
-            run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
-        }
-        timer_global_selection_.Start();
-        core::run_multi_sequence_selection<FileSequenceAdapter, CompareFunction>
-                (context_, compare_function_, run_file_adapters, local_ranks,
-                 splitter_count);
-        timer_global_selection_.Stop();
-        LOG0 << "Local splitters: " << local_ranks;
+            LocalRanks local_ranks(splitter_count, std::vector<size_t>(run_count));
+            std::vector<FileSequenceAdapter> run_file_adapters(run_count);
+            for (size_t i = 0; i < run_count; i++) {
+                run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
+            }
+            timer_global_selection_.Start();
+            core::run_multi_sequence_selection<FileSequenceAdapter, CompareFunction>
+                    (context_, compare_function_, run_file_adapters, local_ranks,
+                     splitter_count);
+            timer_global_selection_.Stop();
+            LOG0 << "Local splitters: " << local_ranks;
 
-        // Redistribute elements
-        LOG << "Scatter " << run_count << " run files.";
-        local_items_ = 0;
-        for (size_t run_index = 0; run_index < run_count; run_index++) {
-            auto data_stream = context_.template GetNewStream<data::CatStream>(
-                    this->dia_id());
+            // Redistribute elements
+            LOG << "Scatter " << run_count << " run files.";
+            local_items_ = 0;
+            for (size_t run_index = 0; run_index < run_count; run_index++) {
+                auto data_stream = context_.template GetNewStream<data::CatStream>(
+                        this->dia_id());
 
-            // Construct offsets vector
-            std::vector<size_t> run_offsets(splitter_count + 2);
-            run_offsets[0] = 0;
-            std::transform(local_ranks.begin(), local_ranks.end(),
-                    run_offsets.begin() + 1,
-                    [run_index](std::vector<size_t> element) {
-                return element[run_index];
-            });
-            run_offsets[splitter_count + 1] =
-                    run_files_[run_index]->num_items();
-            LOG << "Offsets[" << run_index << "]: " << run_offsets;
-            LOG << run_offsets[context_.my_rank() + 1] -
-            run_offsets[context_.my_rank()] << " / " <<
-            run_files_[run_index]->num_items() << " elements will stay local.";
+                // Construct offsets vector
+                std::vector<size_t> run_offsets(splitter_count + 2);
+                run_offsets[0] = 0;
+                std::transform(local_ranks.begin(), local_ranks.end(),
+                               run_offsets.begin() + 1,
+                               [run_index](std::vector<size_t> element) {
+                                   return element[run_index];
+                               });
+                run_offsets[splitter_count + 1] =
+                        run_files_[run_index]->num_items();
+                LOG << "Offsets[" << run_index << "]: " << run_offsets;
+                LOG << run_offsets[context_.my_rank() + 1] -
+                       run_offsets[context_.my_rank()] << " / " <<
+                    run_files_[run_index]->num_items() << " elements will stay local.";
 
-            timer_global_scatter_.Start();
-            data_stream->template Scatter<ValueType>(*run_files_[run_index],
-                    run_offsets, true);
-            timer_global_scatter_.Stop();
+                timer_global_scatter_.Start();
+                data_stream->template Scatter<ValueType>(*run_files_[run_index],
+                                                         run_offsets, true);
+                timer_global_scatter_.Stop();
 
-            auto final_run_file = context_.GetFilePtr(this);
-            final_run_files_.emplace_back(final_run_file);
-            data_stream->GetFile(final_run_file);
-            local_items_ += final_run_file->num_items();
+                auto final_run_file = context_.GetFilePtr(this);
+                final_run_files_.emplace_back(final_run_file);
+                data_stream->GetFile(final_run_file);
+                local_items_ += final_run_file->num_items();
 
-            data_stream.reset();
+                data_stream.reset();
+            }
+        } else {
+            for (auto run_file : run_files_) {
+                final_run_files_.push_back(run_file);
+            }
         }
         /* } Phase 2 */
     }
