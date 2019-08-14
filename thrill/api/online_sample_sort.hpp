@@ -46,7 +46,7 @@ template <
 class OnlineSampleSortNode final : public DOpNode<ValueType>
 {
     // TODO Unit test
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of stats
     static constexpr bool stats_enabled = true;
