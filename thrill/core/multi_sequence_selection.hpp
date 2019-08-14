@@ -85,7 +85,7 @@ public:
     size_t GetIndexOf(const ValueType& item, size_t tie, size_t left,
             size_t right, const Comparator& less)
     {
-        static constexpr bool debug = true;
+        static constexpr bool debug = false;
 
         static_assert(
                 std::is_convertible<
