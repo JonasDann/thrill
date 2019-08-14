@@ -447,16 +447,17 @@ int main(int argc, char *argv[]) {
                         os_file.close();
                     }
                 } else if (benchmark == "parameter") {
-                    const size_t b_start = 5;
+                    const size_t b_start = 2;
                     const size_t b_end = 50;
                     const size_t b_step = 5;
 
-                    const size_t k_start = 100;
+                    const size_t k_start = 20;
                     const size_t k_end = 1000;
-                    const size_t k_step = 100;
+                    const size_t k_step = 50;
 
-                    const size_t combinations = ((b_end - b_start) / b_step) *
-                            ((k_end - k_start) / k_step);
+                    const auto combinations = static_cast<size_t>(ceil(
+                            static_cast<double>(b_end - b_start) / b_step) *
+                            ceil(static_cast<double>(k_end - k_start) / k_step));
                     if (rank == 0) {
                         LOG1 << combinations << " combinations";
                     }
