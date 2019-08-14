@@ -103,10 +103,11 @@ public:
      */
     template <typename Comparator = std::less<ItemType>>
     size_t GetFastIndexOf(const ItemType& item, size_t tie, size_t left,
-            size_t right, const Comparator& func = Comparator()) const {
+            size_t right, const Comparator& less = Comparator()) const {
         LOG << "item: " << item;
+        // TODO replace with custom binary search with tie breaker
         size_t block_index = std::lower_bound(block_samples_.begin(),
-                block_samples_.end(), item, func) - block_samples_.begin();
+                block_samples_.end(), item, less) - block_samples_.begin();
         size_t result = 0;
         if (block_index > 0) {
             block_index--;
@@ -122,14 +123,22 @@ public:
             size_t block_right = num_items_sum_[block_index];
             LOG << "block_index: " << block_index << " / " << block_samples_.size();
             LOG << "range: [" << block_left << ", " << block_right << ")";
-            result = GetIndexOf<ItemType, Comparator>(item, tie, block_left, block_right, func);
+            result = GetIndexOf<ItemType, Comparator>(item, tie, block_left, block_right, less);
         }
         if (self_verify) {
-            auto real_index = GetIndexOf<ItemType, Comparator>(item, tie, left, right, func);
+            auto real_index = GetIndexOf<ItemType, Comparator>(item, tie, left, right, less);
             LOG << "result: " << result << " / " << real_index;
             die_unless(result == real_index);
         }
         return result;
+    }
+
+    std::deque<size_t> num_items_sum() {
+        return num_items_sum_;
+    }
+
+    std::deque<ItemType> block_samples() {
+        return block_samples_;
     }
 private:
     std::deque<ItemType> block_samples_;

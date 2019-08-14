@@ -55,6 +55,22 @@ public:
         return file_->GetFastIndexOf(item, tie, left, right, comparator);
     }
 
+    size_t ItemsStartIn(size_t i) {
+        return file_->ItemsStartIn(i);
+    }
+
+    std::deque<ValueType_> block_samples() {
+        return file_->block_samples();
+    }
+
+    std::deque<size_t> num_items_sum() {
+        return file_->num_items_sum();
+    }
+
+    size_t num_blocks() {
+        return file_->num_blocks();
+    }
+
 private:
     data::SampledFilePtr<ValueType> file_;
 };
@@ -69,7 +85,7 @@ public:
     size_t GetIndexOf(const ValueType& item, size_t tie, size_t left,
             size_t right, const Comparator& less)
     {
-        static constexpr bool debug = false;
+        static constexpr bool debug = true;
 
         static_assert(
                 std::is_convertible<
@@ -122,68 +138,19 @@ public:
         : context_(context), comparator_(comparator)
     {}
 
-    void GetEquallyDistantSplitterRanks(SequenceAdapters& sequences,
+    virtual void GetEquallyDistantSplitterRanks(SequenceAdapters& sequences,
                           std::vector<std::vector<size_t>>& out_local_ranks,
                           size_t splitter_count)
     {
         auto seq_count = sequences.size();
 
-        // Count of all local elements.
-        size_t local_size = 0;
-
-        for (size_t s = 0; s < sequences.size(); s++) {
-            local_size += sequences[s].size();
-        }
-
-        // Test that the data we got is sorted.
-        if (self_verify) {
-            for (size_t s = 0; s < seq_count; s++) {
-                for (size_t n = 1; n < sequences[s].size(); n++) {
-                    if (comparator_(sequences[s][n - 1], sequences[s][n])) {
-                        die("Merge input was not sorted!");
-                    }
-                }
-            }
-        }
-
-        // Count of all global elements.
-        stats_.comm_timer_.Start();
-        size_t global_size = context_.net.AllReduce(local_size);
-        stats_.comm_timer_.Stop();
-
-        LOG << "local size: " << local_size;
-        LOG << "global size: " << global_size;
-
-        // Calculate and remember the ranks we search for.  In our case, we
-        // search for ranks that split the data into equal parts.
         std::vector<size_t> target_ranks(splitter_count);
-
-        for (size_t r = 0; r < splitter_count; r++) {
-            target_ranks[r] = (global_size / (splitter_count + 1)) * (r + 1);
-            // Modify all ranks 0..(globalSize % p), in case global_size is not
-            // divisible by p.
-            if (r < global_size % (splitter_count + 1))
-                target_ranks[r] += 1;
-        }
-
-        if (debug) {
-            LOG << "target_ranks: " << target_ranks;
-
-            stats_.comm_timer_.Start();
-            assert(context_.net.Broadcast(target_ranks) == target_ranks);
-            stats_.comm_timer_.Stop();
-        }
-
-        // buffer for the global ranks of selected pivots
-        std::vector<size_t> global_ranks(splitter_count);
+        GetTargetRanks(sequences, splitter_count, target_ranks);
 
         // Search range bounds.
         std::vector<std::vector<size_t>>
                 left(splitter_count, std::vector<size_t>(seq_count)),
                 width(splitter_count, std::vector<size_t>(seq_count));
-
-        // Auxiliary array.
-        std::vector<Pivot> pivots(splitter_count);
 
         // Initialize all lefts with 0 and all widths with size of their
         // respective file.
@@ -193,74 +160,10 @@ public:
             }
         }
 
-        bool finished = false;
-        stats_.balancing_timer_.Start();
-
-        // Iterate until we find a pivot which is within the prescribed balance
-        // tolerance
-        while (!finished) {
-
-            LOG << "iteration: " << stats_.iterations_;
-            LOG0 << "left: " << left;
-            LOG0 << "width: " << width;
-
-            if (debug) {
-                for (size_t s = 0; s < seq_count; s++) {
-                    std::ostringstream oss;
-                    for (size_t r = 0; r < splitter_count; ++r) {
-                        if (r != 0) oss << " # ";
-                        oss << '[' << left[r][s] << ',' << left[r][s] + width[r][s] << ')';
-                    }
-                    LOG1 << "left/right[" << s << "]: " << oss.str();
-                }
-            }
-
-            // Find pivots.
-            stats_.pivot_selection_timer_.Start();
-            SelectPivots(sequences, left, width, pivots);
-            stats_.pivot_selection_timer_.Stop();
-
-            LOG << "final pivots: " << VToStr(pivots);
-
-            // Get global ranks and shrink ranges.
-            stats_.search_step_timer_.Start();
-            GetGlobalRanks(sequences, pivots, global_ranks, out_local_ranks, left, width);
-
-            LOG << "global_ranks: " << global_ranks;
-            LOG << "local_ranks: " << out_local_ranks;
-
-            SearchStep(pivots, global_ranks, out_local_ranks, target_ranks, left, width);
-
-            if (debug) {
-                for (size_t s = 0; s < seq_count; s++) {
-                    std::ostringstream oss;
-                    for (size_t r = 0; r < splitter_count; ++r) {
-                        if (r != 0) oss << " # ";
-                        oss << '[' << left[r][s] << ',' << left[r][s] + width[r][s] << ')';
-                    }
-                    LOG1 << "left/right[" << s << "]: " << oss.str();
-                }
-            }
-
-            finished = true;
-            for (size_t r = 0; r < splitter_count; r++) {
-                size_t a = global_ranks[r], b = target_ranks[r];
-                if (tlx::abs_diff(a, b) > 0) {
-                    finished = false;
-                    break;
-                }
-            }
-
-            stats_.search_step_timer_.Stop();
-            stats_.iterations_++;
-        }
-        stats_.balancing_timer_.Stop();
-
-        LOG << "Finished after " << stats_.iterations_ << " iterations";
-        stats_.Print(context_);
+        GetSplitterRanks(sequences, out_local_ranks, target_ranks, left, width);
     }
 
-private:
+protected:
     Context& context_;
 
     Comparator comparator_;
@@ -293,6 +196,27 @@ private:
         Pivot operator () (const Pivot& a, const Pivot& b) const {
             return a.segment_len > b.segment_len ? a : b;
         }
+    };
+
+    class LessPivot
+    {
+    public:
+        explicit LessPivot(const Comparator& comparator) :
+            comparator_(comparator) {}
+
+        bool operator () (const Pivot& a, const Pivot& b) const {
+            auto equal = !comparator_(a.value, b.value) &&
+                    !comparator_(b.value, a.value);
+            auto worker_equal = a.worker_rank == b.worker_rank;
+            auto seq_equal = a.sequence_idx == b.sequence_idx;
+            return comparator_(a.value, b.value) ||
+                    (equal && a.worker_rank < b.worker_rank) ||
+                    (equal && worker_equal && a.sequence_idx < b.sequence_idx) ||
+                    (equal && worker_equal && seq_equal && a.tie_idx < b.tie_idx);
+        }
+
+    private:
+        Comparator comparator_;
     };
 
     using StatsTimer = common::StatsTimerBaseStopped<stats_enabled>;
@@ -354,6 +278,146 @@ private:
 
     //! Instance of selection statistics
     Stats stats_;
+
+    void GetSplitterRanks(SequenceAdapters& sequences,
+            std::vector<std::vector<size_t>>& out_local_ranks,
+            std::vector<size_t>& target_ranks,
+            std::vector<std::vector<size_t>>& left,
+            std::vector<std::vector<size_t>>& width)
+    {
+        auto seq_count = sequences.size();
+        auto splitter_count = target_ranks.size();
+
+        // buffer for the global ranks of selected pivots
+        std::vector<size_t> global_ranks(splitter_count);
+
+        // Auxiliary array.
+        std::vector<Pivot> pivots(splitter_count);
+
+        bool finished = false;
+        stats_.balancing_timer_.Start();
+
+        if (debug) {
+            for (size_t s = 0; s < seq_count; s++) {
+                std::ostringstream oss;
+                for (size_t r = 0; r < splitter_count; ++r) {
+                    if (r != 0) oss << " # ";
+                    oss << '[' << left[r][s] << ',' << left[r][s] + width[r][s] << ')';
+                }
+                LOG1 << "initial left/right[" << s << "]: " << oss.str();
+            }
+        }
+
+        // Iterate until we find a pivot which is within the prescribed balance
+        // tolerance
+        while (!finished) {
+
+            LOG << "iteration: " << stats_.iterations_;
+            LOG0 << "left: " << left;
+            LOG0 << "width: " << width;
+
+            // Find pivots.
+            stats_.pivot_selection_timer_.Start();
+            SelectPivots(sequences, left, width, pivots);
+            stats_.pivot_selection_timer_.Stop();
+
+            LOG << "final pivots: " << VToStr(pivots);
+
+            size_t pivots_len_sum = 0;
+            for (auto pivot : pivots) {
+                pivots_len_sum += pivot.segment_len;
+            }
+
+            // Get global ranks and shrink ranges.
+            stats_.search_step_timer_.Start();
+            GetGlobalRanks(sequences, pivots, global_ranks, out_local_ranks, left, width);
+
+            LOG << "global_ranks: " << global_ranks;
+            LOG << "local_ranks: " << out_local_ranks;
+
+            SearchStep(pivots, global_ranks, out_local_ranks, target_ranks, left, width);
+
+            if (debug) {
+                for (size_t s = 0; s < seq_count; s++) {
+                    std::ostringstream oss;
+                    for (size_t r = 0; r < splitter_count; ++r) {
+                        if (r != 0) oss << " # ";
+                        oss << '[' << left[r][s] << ',' << left[r][s] + width[r][s] << ')';
+                    }
+                    LOG1 << "left/right[" << s << "]: " << oss.str();
+                }
+            }
+
+            finished = true;
+            for (size_t r = 0; r < splitter_count; r++) {
+                size_t a = global_ranks[r], b = target_ranks[r];
+                if (tlx::abs_diff(a, b) > 0) {
+                    finished = false;
+                    break;
+                }
+            }
+            if (pivots_len_sum == 0) {
+                finished = true;
+            }
+
+            stats_.search_step_timer_.Stop();
+            stats_.iterations_++;
+        }
+        stats_.balancing_timer_.Stop();
+
+        LOG << "Finished after " << stats_.iterations_ << " iterations";
+        stats_.Print(context_);
+    }
+
+    void GetTargetRanks(SequenceAdapters& sequences,
+            const size_t splitter_count,
+            std::vector<size_t>& out_target_ranks) {
+        auto seq_count = sequences.size();
+
+        // Count of all local elements.
+        size_t local_size = 0;
+
+        for (size_t s = 0; s < sequences.size(); s++) {
+            local_size += sequences[s].size();
+        }
+
+        // Test that the data we got is sorted.
+        if (self_verify) {
+            for (size_t s = 0; s < seq_count; s++) {
+                for (size_t n = 1; n < sequences[s].size(); n++) {
+                    //if (comparator_(sequences[s][n], sequences[s][n - 1])) {
+                    //    die("Input was not sorted!");
+                    //}
+                }
+            }
+        }
+
+        // Count of all global elements.
+        stats_.comm_timer_.Start();
+        size_t global_size = context_.net.AllReduce(local_size);
+        stats_.comm_timer_.Stop();
+
+        LOG << "local size: " << local_size;
+        LOG << "global size: " << global_size;
+
+        // Calculate and remember the ranks we search for.  In our case, we
+        // search for ranks that split the data into equal parts.
+        for (size_t r = 0; r < splitter_count; r++) {
+            out_target_ranks[r] = (global_size / (splitter_count + 1)) * (r + 1);
+            // Modify all ranks 0..(globalSize % p), in case global_size is not
+            // divisible by p.
+            if (r < global_size % (splitter_count + 1))
+                out_target_ranks[r] += 1;
+        }
+
+        if (debug) {
+            LOG << "target_ranks: " << out_target_ranks;
+
+            stats_.comm_timer_.Start();
+            assert(context_.net.Broadcast(out_target_ranks) == out_target_ranks);
+            stats_.comm_timer_.Stop();
+        }
+    }
 
     /*!
      * Selects random global pivots for all splitter searches based on all
@@ -433,6 +497,7 @@ private:
 
         // Simply get the rank of each pivot in each file. Sum the ranks up
         // locally.
+        std::vector<std::map<Pivot, size_t, LessPivot>> index_lookup(sequences.size(), std::map<Pivot, size_t, LessPivot>(LessPivot(comparator_)));
         for (size_t r = 0; r < pivots.size(); r++) {
             size_t rank = 0;
             for (size_t s = 0; s < sequences.size(); s++) {
@@ -440,10 +505,15 @@ private:
 
                 size_t idx = left[r][s];
                 if (width[r][s] > 0) {
-                    idx = sequences[s].template GetIndexOf<Comparator>(
-                            pivots[r].value, pivots[r].tie_idx,
-                            left[r][s], left[r][s] + width[r][s],
-                            comparator_);
+                    if (index_lookup[s].find(pivots[r]) != index_lookup[s].end()) {
+                        idx = index_lookup[s][pivots[r]];
+                    } else {
+                        idx = sequences[s].template GetIndexOf<Comparator>(
+                                pivots[r].value, pivots[r].tie_idx,
+                                left[r][s], left[r][s] + width[r][s],
+                                comparator_);
+                        index_lookup[s][pivots[r]] = idx;
+                    }
                 }
 
                 stats_.file_op_timer_.Stop();
@@ -489,13 +559,12 @@ private:
 
         for (size_t r = 0; r < width.size(); r++) {
             for (size_t s = 0; s < width[r].size(); s++) {
-
-                if (width[r][s] == 0)
-                    continue;
-
                 size_t local_rank = local_ranks[r][s];
                 size_t old_width = width[r][s];
-                assert(left[r][s] <= local_rank);
+
+                if (width[r][s] == 0 || local_rank < left[r][s] ||
+                    local_rank > left[r][s] + width[r][s])
+                    continue;
 
                 if (target_ranks[r] > global_ranks[r]) {
                     // +1 binary search only on worker that pivot is from and
@@ -516,7 +585,6 @@ private:
                     left[r][s] = local_rank;
                     width[r][s] = 0;
                 }
-                assert(width[r][s] >= 0);
 
                 if (debug) {
                     die_unless(width[r][s] <= old_width);
@@ -526,14 +594,195 @@ private:
     }
 };
 
+template <typename ValueType, typename Comparator, typename SortAlgorithm>
+class MultiSequenceSelectorSampled : public MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator> {
+    using Sequences = typename std::vector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>>;
+    using Samples = typename std::vector<std::deque<ValueType>>;
+    using Pivot = typename MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>::Pivot;
+    using ReducePivots = typename MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>::ReducePivots;
+
+    static constexpr bool debug = false;
+
+public:
+    MultiSequenceSelectorSampled(Context& context, size_t dia_id,
+                                 const Comparator& comparator,
+                                 const SortAlgorithm& sort_algorithm)
+         : MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>(context, comparator),
+                 dia_id_(dia_id), sort_algorithm_(sort_algorithm) {
+
+    }
+
+    void GetEquallyDistantSplitterRanks(Sequences &sequences,
+                                        std::vector<std::vector<size_t>> &out_local_ranks,
+                                        size_t splitter_count) {
+        auto seq_count = sequences.size();
+
+        std::vector<size_t> target_ranks(splitter_count);
+        this->GetTargetRanks(sequences, splitter_count, target_ranks);
+
+        // Search range bounds.
+        std::vector<std::vector<size_t>>
+                left(splitter_count, std::vector<size_t>(seq_count)),
+                width(splitter_count, std::vector<size_t>(seq_count));
+
+        auto stream = this->context_.template GetNewStream<data::CatStream>(
+                this->dia_id_);
+        auto writers = stream->GetWriters();
+        auto readers = stream->GetReaders();
+
+        std::vector<BlockSample> samples;
+        for (size_t s = 0; s < seq_count; s++) {
+            auto num_blocks = sequences[s].num_blocks();
+            auto block_samples = sequences[s].block_samples();
+
+            std::vector<BlockSample> sequence_samples;
+            sequence_samples.reserve(num_blocks);
+
+            for (size_t i = 0; i < num_blocks; i++) {
+                samples.push_back(
+                        BlockSample {
+                            block_samples[i],
+                            i,
+                            sequences[s].ItemsStartIn(i),
+                            this->context_.my_rank(),
+                            s
+                        });
+            }
+        }
+
+        auto P = this->context_.num_workers();
+
+        if (this->context_.my_rank() != 0) {
+            writers[0].Put(samples);
+            writers[0].Close();
+        }
+
+        if (this->context_.my_rank() == 0) {
+            for (size_t p = 1; p < P; p++) {
+                auto foreign_samples = std::move(
+                        readers[p].template Next<std::vector<BlockSample>>());
+
+                samples.insert(samples.end(), foreign_samples.begin(),
+                        foreign_samples.end());
+            }
+
+            // TODO replace with merges
+            sort_algorithm_(samples.begin(), samples.end(),
+                    [this](BlockSample a, BlockSample b)
+                    {
+                        return this->comparator_(a.value, b.value);
+                    });
+
+            for (size_t i = 1; i < samples.size(); i++) {
+                samples[i + 1].size += samples[i].size;
+            }
+            for (size_t i = samples.size() - 1; i > 0; i--) {
+                samples[i].size = samples[i - 1].size;
+            }
+            samples[0].size = 0;
+
+            for (size_t r = 0; r < splitter_count; r++) {
+                // TODO init next lower_bound with this iterator
+                size_t block_index = std::lower_bound(samples.begin(),
+                                                      samples.end(),
+                                                      target_ranks[r],
+                                                      [](BlockSample b, size_t t){
+                    return b.size < t;
+                }) - samples.begin();
+
+                if (block_index > 0) {
+                    size_t b = 0;
+                    std::vector<std::vector<bool>> workers_sent(P,
+                            std::vector<bool>(seq_count, false));
+
+                    while (b < P * seq_count && block_index > 0) {
+                        block_index--;
+
+                        auto block_sample = samples[block_index];
+                        if (!workers_sent[block_sample.worker_rank]
+                                [block_sample.sequence_idx]) {
+                            writers[block_sample.worker_rank].Put(
+                                    ReplyBlockSample{
+                                            block_sample.idx,
+                                            block_sample.sequence_idx,
+                                            r
+                                    });
+                            workers_sent[block_sample.worker_rank]
+                                [block_sample.sequence_idx] = true;
+                            b++;
+                        }
+                    }
+                }
+            }
+
+            writers[0].Close();
+        }
+
+        for (size_t p = 1; p < P; p++) {
+            writers[p].Close();
+        }
+
+        while(readers[0].HasNext()) {
+            auto sample = readers[0].template Next<ReplyBlockSample>();
+
+            width[sample.splitter_idx][sample.sequence_idx] =
+                    sequences[sample.sequence_idx].ItemsStartIn(sample.idx);
+            left[sample.splitter_idx][sample.sequence_idx] =
+                    sequences[sample.sequence_idx].num_items_sum()[sample.idx] -
+                    width[sample.splitter_idx][sample.sequence_idx];
+        }
+
+        stream.reset();
+
+        this->GetSplitterRanks(sequences, out_local_ranks, target_ranks, left,
+                width);
+    }
+
+private:
+    size_t dia_id_;
+
+    SortAlgorithm sort_algorithm_;
+
+    struct BlockSample {
+        ValueType value;
+        size_t    idx;
+        size_t    size;
+        size_t    worker_rank;
+        size_t    sequence_idx;
+    };
+
+    struct ReplyBlockSample {
+        size_t idx;
+        size_t sequence_idx;
+        size_t splitter_idx;
+    };
+};
+
 template <typename SequenceAdapterType, typename Comparator>
 void run_multi_sequence_selection(Context &context,
                                   const Comparator &comparator,
                                   std::vector<SequenceAdapterType> &sequences,
                                   std::vector<std::vector<size_t>> &out_local_ranks,
                                   size_t splitter_count) {
-    MultiSequenceSelector<SequenceAdapterType, Comparator> selector(context, comparator);
-    return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks, splitter_count);
+    MultiSequenceSelector<SequenceAdapterType, Comparator> selector(context,
+                                                                    comparator);
+    return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks,
+                                                   splitter_count);
+
+}
+
+template <typename ValueType, typename Comparator,
+        typename SortAlgorithm>
+void run_sampled_multi_sequence_selection(Context &context, size_t dia_id,
+                                  const Comparator &comparator,
+                                  const SortAlgorithm &sort_algorithm,
+                                  std::vector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>> &sequences,
+                                  std::vector<std::vector<size_t>> &out_local_ranks,
+                                  size_t splitter_count) {
+    MultiSequenceSelectorSampled<ValueType, Comparator, SortAlgorithm>
+            selector(context, dia_id, comparator, sort_algorithm);
+    return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks,
+            splitter_count);
 
 }
 

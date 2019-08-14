@@ -453,8 +453,6 @@ private:
         timer_pre_op_scatter_.Stop();
         current_run_[0].clear();
 
-        // TODO Heap bug
-
         LOG << "Building merge tree.";
         auto multi_way_merge_tree = core::make_multiway_merge_tree<ValueType>(
                 data_readers.begin(), data_readers.end(), compare_function_);
@@ -503,8 +501,9 @@ private:
                 run_file_adapters[i] = FileSequenceAdapter(run_files_[i]);
             }
             timer_global_selection_.Start();
-            core::run_multi_sequence_selection<FileSequenceAdapter, CompareFunction>
-                    (context_, compare_function_, run_file_adapters, local_ranks,
+            core::run_sampled_multi_sequence_selection<ValueType, CompareFunction, SortAlgorithm>
+                    (context_, this->dia_id(), compare_function_,
+                     sort_algorithm_, run_file_adapters, local_ranks,
                      splitter_count);
             timer_global_selection_.Stop();
             LOG0 << "Local splitters: " << local_ranks;
