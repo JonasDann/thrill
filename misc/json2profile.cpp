@@ -1124,12 +1124,14 @@ std::string PageMain() {
                                   [](const CLinuxProcStats& c) {
                                       return c.cpu_user;
                                   });
-    uint64_t net_tx_rx_bytes =
-        CalcSum(c_LinuxProcStats,
-                [](const CLinuxProcStats& c) {
-                    return c.net_tx_bytes + c.net_rx_bytes;
-                });
-    uint64_t net_tx_bytes =
+    double net_tx_rx_bytes = 0;
+    for (size_t i = 0; i < c_NetManager.size() - 1; i++) {
+        double td = (c_NetManager[i + 1].ts - c_NetManager[i].ts) / 1000000.0;
+        net_tx_rx_bytes +=
+                (c_NetManager[i].tx_speed + c_NetManager[i].rx_speed) * td;
+    }
+
+    /*uint64_t net_tx_bytes =
         CalcSum(c_LinuxProcStats,
                 [](const CLinuxProcStats& c) {
                     return c.net_tx_bytes;
@@ -1138,14 +1140,14 @@ std::string PageMain() {
         CalcSum(c_LinuxProcStats,
                 [](const CLinuxProcStats& c) {
                     return c.net_rx_bytes;
-                });
+                });*/
 
     double net_tx_rx_speed =
-        CalcAverage(c_LinuxProcStats,
-                    [](const CLinuxProcStats& c) {
-                        return c.net_tx_speed + c.net_rx_speed;
+        CalcAverage(c_NetManager,
+                    [](const CNetManager& c) {
+                        return c.tx_speed + c.rx_speed;
                     });
-    double net_tx_speed =
+    /*double net_tx_speed =
         CalcAverage(c_LinuxProcStats,
                     [](const CLinuxProcStats& c) {
                         return c.net_tx_speed;
@@ -1154,7 +1156,7 @@ std::string PageMain() {
         CalcAverage(c_LinuxProcStats,
                     [](const CLinuxProcStats& c) {
                         return c.net_rx_speed;
-                    });
+                    });*/
 
     uint64_t diskstats_rd_wr_bytes =
         CalcSum(c_LinuxProcStats,
@@ -1175,25 +1177,25 @@ std::string PageMain() {
     two_cells_IEC(net_tx_rx_bytes);
     oss << "</tr>";
 
-    oss << "<tr><td>TX net total</td>";
+    /*oss << "<tr><td>TX net total</td>";
     two_cells_IEC(net_tx_bytes);
     oss << "</tr>";
 
     oss << "<tr><td>RX net total</td>";
     two_cells_IEC(net_rx_bytes);
-    oss << "</tr>";
+    oss << "</tr>";*/
 
     oss << "<tr><td>TX+RX net average</td>";
     two_cells_IEC_per_sec(net_tx_rx_speed);
     oss << "</tr>";
 
-    oss << "<tr><td>TX net average</td>";
+    /*oss << "<tr><td>TX net average</td>";
     two_cells_IEC_per_sec(net_tx_speed);
     oss << "</tr>";
 
     oss << "<tr><td>RX net average</td>";
     two_cells_IEC_per_sec(net_rx_speed);
-    oss << "</tr>";
+    oss << "</tr>";*/
 
     oss << "<tr><td>I/O sys read+write</td>";
     two_cells_IEC(diskstats_rd_wr_bytes);
@@ -1211,11 +1213,11 @@ std::string PageMain() {
         << " cpu_user_sys=" << cpu_user_sys
         << " cpu_user=" << cpu_user
         << " net_tx_rx_bytes=" << net_tx_rx_bytes
-        << " net_tx_bytes=" << net_tx_bytes
-        << " net_rx_bytes=" << net_rx_bytes
+        //<< " net_tx_bytes=" << net_tx_bytes
+        //<< " net_rx_bytes=" << net_rx_bytes
         << " net_tx_rx_speed=" << net_tx_rx_speed
-        << " net_tx_speed=" << net_tx_speed
-        << " net_rx_speed=" << net_rx_speed
+        //<< " net_tx_speed=" << net_tx_speed
+        //<< " net_rx_speed=" << net_rx_speed
         << " diskstats_rd_wr_bytes=" << diskstats_rd_wr_bytes
         << "\n";
 
@@ -1356,8 +1358,8 @@ std::string ResultLines() {
     }
 
     for (const auto& v : MakeSeriesVector(
-             c_LinuxProcStats, [](const CLinuxProcStats& c) {
-                 return c.net_tx_speed + c.net_rx_speed;
+             c_NetManager, [](const CNetManager& c) {
+                 return c.tx_speed + c.rx_speed;
              }))
     {
         oss << "RESULT"
@@ -1376,6 +1378,30 @@ std::string ResultLines() {
             << "\ttitle=" << title
             << "\tts=" << v.first
             << "\tdisk=" << v.second << "\n";
+    }
+
+    for (const auto& v : MakeSeriesVector(
+            c_LinuxProcStats,
+            [](const CLinuxProcStats& c) {
+                return c.diskstats_rd_bytes;
+            }))
+    {
+        oss << "RESULT"
+            << "\ttitle=" << title
+            << "\tts=" << v.first
+            << "\tdisk_read=" << v.second << "\n";
+    }
+
+    for (const auto& v : MakeSeriesVector(
+            c_LinuxProcStats,
+            [](const CLinuxProcStats& c) {
+                return c.diskstats_wr_bytes;
+            }))
+    {
+        oss << "RESULT"
+            << "\ttitle=" << title
+            << "\tts=" << v.first
+            << "\tdisk_write=" << v.second << "\n";
     }
 
     for (const auto& v : MakeSeriesVector(
