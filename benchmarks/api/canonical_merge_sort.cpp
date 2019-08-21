@@ -38,6 +38,29 @@ struct Record {
 
 constexpr bool self_verify = false;
 
+using RandomGenerator = std::mt19937_64;
+
+uint64_t generator(size_t i, size_t n, const std::string& generator_type,
+                   RandomGenerator rng) {
+    std::uniform_int_distribution<int> uni;
+    std::exponential_distribution<double> expo(2.0);
+    if (generator_type == "uni") {
+        return uni(rng);
+    } else if (generator_type == "sort") {
+        return i;
+    } else if (generator_type == "ones") {
+        return 1;
+    } else if (generator_type == "almost") {
+        return 1; // TODO
+    } else if (generator_type == "window") {
+        size_t window_size = 10000;
+        return i + (uni(rng) % window_size);
+    } else if (generator_type == "dup") {
+        return static_cast<uint64_t>(std::fmod((pow(i, 2) + static_cast<double>(n) / 2), n));
+    }
+    return -1;
+}
+
 int main(int argc, char *argv[]) {
 
     tlx::CmdlineParser clp;
@@ -49,6 +72,10 @@ int main(int argc, char *argv[]) {
     clp.add_param_bytes("size", size,
                         "Amount of data transferred between peers (example: 1 GiB).");
 
+    std::string generator_type;
+    clp.add_param_string("generator", generator_type,
+                         "Type of generator (uni, sort, ones, almost, window, dup).");
+
     if (!clp.process(argc, argv)) {
         return -1;
     }
@@ -56,19 +83,18 @@ int main(int argc, char *argv[]) {
     clp.print_result();
 
     api::Run(
-            [&iterations, &size](api::Context &ctx) {
+            [&iterations, &size, &generator_type](api::Context &ctx) {
                 for (int i = 0; i < iterations; i++) {
-                    std::default_random_engine generator(
-                            std::random_device{}());
-                    std::uniform_int_distribution<uint64_t> distribution(
-                            0, std::numeric_limits<uint64_t>::max());
+                    std::random_device rd;
+                    RandomGenerator rng(rd());
 
                     size_t element_count = size / sizeof(Record);
                     common::StatsTimerStart timer;
                     auto sorted = api::Generate(
                             ctx, element_count,
-                            [&distribution, &generator](size_t) -> Record {
-                                uint64_t key = distribution(generator);
+                            [&ctx, &element_count, &generator_type, &rng](size_t i) -> Record {
+                                auto global_idx = i * ctx.num_workers() + ctx.my_rank();
+                                uint64_t key = generator(global_idx, element_count, generator_type, rng);
                                 Record r{key, key};
                                 return r;
                             })
