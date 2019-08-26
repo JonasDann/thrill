@@ -90,13 +90,12 @@ int main(int argc, char* argv[]) {
                     std::random_device rd;
                     RandomGenerator rng(rd());
 
-                    auto p = ctx.num_workers();
-                    size_t element_count = size * p / sizeof(Record);
+                    size_t element_count = size / sizeof(Record);
                     common::StatsTimerStart timer;
                     auto sorted = api::Generate(
                             ctx, element_count,
-                            [&ctx, &p, &element_count, &generator_type, &rng](size_t i) -> Record {
-                                auto global_idx = i * p + ctx.my_rank();
+                            [&ctx, &element_count, &generator_type, &rng](size_t i) -> Record {
+                                auto global_idx = i * ctx.num_workers() + ctx.my_rank();
                                 uint64_t key = generator(global_idx, element_count, generator_type, rng);
                                 Record r{key, key};
                                 return r;
