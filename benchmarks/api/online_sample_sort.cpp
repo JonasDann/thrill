@@ -54,7 +54,7 @@ uint64_t generator(size_t i, size_t n, const std::string& generator_type,
     } else if (generator_type == "almost") {
         return 1; // TODO
     } else if (generator_type == "window") {
-        size_t window_size = 10000;
+        size_t window_size = n * 10;
         return i + (uni(rng) % window_size);
     } else if (generator_type == "dup") {
         return static_cast<uint64_t>(std::fmod((pow(i, 2) + static_cast<double>(n) / 2), n));
@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
     uint64_t size;
 
     clp.add_param_bytes("size", size,
-                        "Amount of data transfered between peers (example: 1 GiB).");
+                        "Amount of data generated per host (example: 1 GiB).");
 
     std::string generator_type;
     clp.add_param_string("generator", generator_type,
@@ -90,12 +90,13 @@ int main(int argc, char* argv[]) {
                     std::random_device rd;
                     RandomGenerator rng(rd());
 
-                    size_t element_count = size / sizeof(Record);
+                    auto p = ctx.num_workers();
+                    size_t element_count = size * p / sizeof(Record);
                     common::StatsTimerStart timer;
                     auto sorted = api::Generate(
                             ctx, element_count,
-                            [&ctx, &element_count, &generator_type, &rng](size_t i) -> Record {
-                                auto global_idx = i * ctx.num_workers() + ctx.my_rank();
+                            [&ctx, &p, &element_count, &generator_type, &rng](size_t i) -> Record {
+                                auto global_idx = i * p + ctx.my_rank();
                                 uint64_t key = generator(global_idx, element_count, generator_type, rng);
                                 Record r{key, key};
                                 return r;
