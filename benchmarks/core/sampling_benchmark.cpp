@@ -36,12 +36,10 @@ double calculate_error(std::vector<Type>& sequence, std::vector<Type>& samples) 
     size_t k = samples.size();
 
     float error = 0;
-    int actual_rank = 0;
     for (size_t j = 0; j < k; j++) {
         int target_rank = (n / (k + 1)) * (j + 1);
-        while (sequence[actual_rank] < samples[j]) {
-            actual_rank++;
-        }
+        auto actual_rank = std::lower_bound(sequence.begin(), sequence.end(),
+                samples[j]) - sequence.begin();
         error += abs(target_rank - actual_rank);
     }
     return error / k / n;
@@ -108,7 +106,7 @@ void get_splitters(api::Context& ctx, const size_t P, const size_t rank,
 }
 
 void gather_sequence(api::Context& ctx, const size_t rank, const size_t P,
-        const std::vector<Type>& sequence, std::vector<Type>& out_sequence_all,
+        const std::vector<Type>& sequence,
         std::vector<std::vector<Type>>& out_sequence_gather) {
     auto stream = ctx.template GetNewStream<data::CatStream>(0);
     auto writers = stream->GetWriters();
@@ -120,10 +118,7 @@ void gather_sequence(api::Context& ctx, const size_t rank, const size_t P,
     if (rank == 0) {
         for (auto &reader : readers) {
             auto s = reader.template Next<std::vector<Type>>();
-            out_sequence_all.insert(out_sequence_all.end(),
-                                s.begin(),
-                                s.end());
-            out_sequence_gather.push_back(s);
+            out_sequence_gather.push_back(std::move(s));
         }
     }
 
@@ -148,7 +143,7 @@ Type generator(size_t i, size_t n, const std::string& generator_type,
     } else if (generator_type == "almost") {
         return 1; // TODO
     } else if (generator_type == "window") {
-        size_t window_size = 10000;
+        size_t window_size = n * 10;
         return i + (uni(rng) % window_size);
     } else if (generator_type == "dup") {
         return static_cast<Type>(std::fmod((pow(i, 2) + static_cast<double>(n) / 2), n));
@@ -159,12 +154,13 @@ Type generator(size_t i, size_t n, const std::string& generator_type,
 void iteration(const size_t i, const size_t rank, const size_t n,
         const size_t P, const size_t num_measurements, api::Context& ctx,
         RandomGenerator& rng, const std::string& generator_type, const size_t b,
-        const size_t k, const std::vector<double>& quantiles,
+        const size_t k, const size_t reservoir_size,
+        const std::vector<double>& quantiles,
         std::vector<std::vector<Type>>& out_rs_splitters,
         std::vector<std::vector<Type>>& out_os_splitters,
-        std::vector<Type>& out_sequence_all,
         std::vector<std::vector<Type>>& out_sequence_gather) {
     const size_t nP = n / P;
+    thrill::common::StatsTimerStart timer;
 
     if (rank == 0) {
         LOG1 << "ITERATION " << i;
@@ -172,7 +168,7 @@ void iteration(const size_t i, const size_t rank, const size_t n,
 
     // Initialize
     std::vector<Type> samples;
-    common::ReservoirSampling<Type, RandomGenerator> rs(1000 / P, samples, rng);
+    common::ReservoirSampling<Type, RandomGenerator> rs(reservoir_size, samples, rng);
 
     core::OnlineSampler<Type, Comparator, DefaultSortAlgorithm, false>
             os(b, k, ctx, 0, Comparator(), DefaultSortAlgorithm());
@@ -210,10 +206,12 @@ void iteration(const size_t i, const size_t rank, const size_t n,
     }
 
     // Gather sequence
-    gather_sequence(ctx, rank, P, sequence, out_sequence_all,
-            out_sequence_gather);
+    gather_sequence(ctx, rank, P, sequence, out_sequence_gather);
 
-    std::sort(out_sequence_all.begin(), out_sequence_all.end());
+    timer.Stop();
+    if (rank == 0) {
+        LOG1 << timer.Milliseconds() / 1000.0 << "s";
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -222,10 +220,10 @@ int main(int argc, char *argv[]) {
 
     std::string benchmark;
     clp.add_param_string("benchmark", benchmark,
-                         "Type of benchmark (histogram, error, parameter).");
+                         "Type of benchmark (histogram, error, parameter, size).");
 
-    int iterations;
-    clp.add_param_int("i", iterations, "Iterations.");
+    size_t iterations;
+    clp.add_param_size_t("i", iterations, "Iterations.");
 
     size_t n;
     clp.add_param_size_t("n", n, "Amount of elements.");
@@ -260,12 +258,13 @@ int main(int argc, char *argv[]) {
                     n -= n % P;
 
                     const size_t num_measurements = 10;
-                    const size_t b = 10 / P;
-                    const size_t k = 100;
+                    const size_t b = 4;
+                    const size_t k = 200;
 
                     std::string generators[] = {"uni", "sort", "dup", "window"};
 
                     std::vector<std::vector<double>> errors(8);
+                    std::vector<std::vector<double>> wrong_processors(8);
 
                     for (size_t g = 0; g < 4; g++) {
                         std::vector<std::vector<Type>> rs_splitters;
@@ -274,8 +273,14 @@ int main(int argc, char *argv[]) {
                         std::vector<std::vector<Type>> sequence_gather;
 
                         iteration(0, rank, n, P, num_measurements, ctx, rng,
-                                  generators[g], b, k, quantiles, rs_splitters,
-                                  os_splitters, sequence_all, sequence_gather);
+                                  generators[g], b, k, b * k, quantiles, rs_splitters,
+                                  os_splitters, sequence_gather);
+
+                        for (auto& sequence : sequence_gather) {
+                            sequence_all.insert(sequence_all.end(),
+                                    sequence.begin(), sequence.end());
+                        }
+                        std::sort(sequence_all.begin(), sequence_all.end());
 
                         if (rank == 0) {
                             // Calculate mean error of splitters
@@ -287,49 +292,83 @@ int main(int argc, char *argv[]) {
                             }
 
                             // Calculate number of elements on wrong host
-                            // TODO plot
+                            // TODO split up wrong processor and error
                             LOG1 << "";
                             LOG1 << "WRONG PROCESSOR";
-                            double rs_wrong_processor = 0;
-                            double os_wrong_processor = 0;
                             for (size_t x = 0; x < num_measurements; x++) {
                                 size_t start = x * n / num_measurements;
                                 size_t end = (x + 1) * n / num_measurements;
 
-                                rs_wrong_processor += static_cast<double>(
-                                        calculate_wrong_processor(n, P,
-                                                                  start, end, num_splitters,
-                                                                  rs_splitters[x], sequence_all,
-                                                                  sequence_gather));
-
-                                os_wrong_processor += static_cast<double>(
+                                auto os_wrong_processor = static_cast<double>(
                                         calculate_wrong_processor(n, P,
                                                                   start, end, num_splitters,
                                                                   os_splitters[x], sequence_all,
                                                                   sequence_gather));
 
-                                LOG1 << rs_wrong_processor / n << "\t"
-                                     << os_wrong_processor / n;
+                                std::vector<Type> run;
+                                size_t run_size = (n / P) / num_measurements;
+                                size_t run_start = x * run_size;
+                                size_t run_end = (x + 1) * run_size;
+
+                                for (auto& seq : sequence_gather) {
+                                    run.insert(run.end(),
+                                            seq.begin() + run_start,
+                                            seq.begin() + run_end);
+                                }
+
+                                std::sort(run.begin(), run.end());
+
+                                std::vector<Type> mss_splitters;
+                                for (auto q : quantiles) {
+                                    mss_splitters.push_back(run[static_cast<size_t>(q * n / num_measurements)]);
+                                }
+
+                                auto mss_wrong_processor = static_cast<double>(
+                                        calculate_wrong_processor(n, P,
+                                                                  start, end, num_splitters,
+                                                                  mss_splitters, sequence_all,
+                                                                  sequence_gather));
+
+                                LOG1 << num_measurements * os_wrong_processor / n << "\t"
+                                     << num_measurements * mss_wrong_processor / n;
+
+                                wrong_processors[g * 2].push_back(os_wrong_processor);
+                                wrong_processors[g * 2 + 1].push_back(mss_wrong_processor);
                             }
+
+                            LOG1 << "";
                         }
                     }
 
                     if (rank == 0) {
                         std::ofstream errors_file;
                         errors_file.open("sampling_convergence.dat");
+
+                        std::ofstream wrong_processor_file;
+                        wrong_processor_file.open("wrong_processor.dat");
+
                         for (size_t m = 0; m < num_measurements; m++) {
-                            errors_file << (m + 1) * n / num_measurements << "\t";
+                            auto measurement_point = 100 * ((m + 1) * n / num_measurements) / n;
+                            errors_file << measurement_point << "\t";
+                            wrong_processor_file << measurement_point << "\t";
                             for (size_t d = 0; d < errors.size(); d++) {
                                 errors_file << errors[d][m];
+                                wrong_processor_file << num_measurements * wrong_processors[d][m] / n;
                                 if (d == errors.size() - 1) {
                                     errors_file << "\n";
+                                    wrong_processor_file << "\n";
                                 } else {
                                     errors_file << "\t";
+                                    wrong_processor_file << "\t";
                                 }
                             }
                         }
+
                         LOG1 << "Sampling convergence written to sampling_convergence.dat";
                         errors_file.close();
+
+                        LOG1 << "Wrong processor per run written to wrong_processor.dat";
+                        wrong_processor_file.close();
                     }
                 } else if (benchmark == "histogram") {
                     n -= n % P;
@@ -343,15 +382,22 @@ int main(int argc, char *argv[]) {
                     std::vector<std::vector<size_t>> rs_splitter_ranks_by_iter;
                     std::vector<std::vector<size_t>> os_splitter_ranks_by_iter;
 
-                    for (int i = 0; i < iterations; i++) {
+                    for (size_t i = 0; i < iterations; i++) {
                         std::vector<std::vector<Type>> rs_splitters;
                         std::vector<std::vector<Type>> os_splitters;
                         std::vector<Type> sequence_all;
                         std::vector<std::vector<Type>> sequence_gather;
 
                         iteration(i, rank, n, P, 1, ctx, rng,
-                                  generator_type, b, k, quantiles, rs_splitters,
-                                  os_splitters, sequence_all, sequence_gather);
+                                  generator_type, b, k, 1000 / P, quantiles, rs_splitters,
+                                  os_splitters, sequence_gather);
+
+                        for (auto& sequence : sequence_gather) {
+                            sequence_all.insert(sequence_all.end(),
+                                                std::make_move_iterator(sequence.begin()),
+                                                std::make_move_iterator(sequence.end()));
+                        }
+                        std::sort(sequence_all.begin(), sequence_all.end());
 
                         if (rank == 0) {
                             std::vector<size_t> rs_splitter_ranks;
@@ -475,8 +521,15 @@ int main(int argc, char *argv[]) {
                             std::vector<std::vector<Type>> sequence_gather;
 
                             iteration(i++, rank, b * k * P * 1000, P, 1, ctx, rng,
-                                      generator_type, b, k, quantiles, rs_splitters,
-                                      os_splitters, sequence_all, sequence_gather);
+                                      generator_type, b, k, b * k, quantiles, rs_splitters,
+                                      os_splitters, sequence_gather);
+
+                            for (auto& sequence : sequence_gather) {
+                                sequence_all.insert(sequence_all.end(),
+                                                    std::make_move_iterator(sequence.begin()),
+                                                    std::make_move_iterator(sequence.end()));
+                            }
+                            std::sort(sequence_all.begin(), sequence_all.end());
 
                             if (rank == 0) {
                                 auto os_error = calculate_error(sequence_all,
@@ -487,8 +540,66 @@ int main(int argc, char *argv[]) {
                             }
                         }
                     }
-                    LOG1 << "Result written to online_sampling_parameter.dat";
-                    result_file.close();
+                    if (rank == 0) {
+                        LOG1
+                        << "Result written to online_sampling_parameter.dat";
+                        result_file.close();
+                    }
+                } else if (benchmark == "size") {
+                    size_t b = 4;
+                    size_t k = 100;
+                    size_t reservoir_size = b * k;
+
+                    const size_t size_start = 128;
+                    const auto size_end = static_cast<size_t>(pow(2, 20));
+
+                    size_t I = 0;
+                    std::ofstream result_file;
+                    if (rank == 0) {
+                        result_file.open("sampling_relative_size.dat");
+                    }
+                    for (size_t relative_size = size_start; relative_size < size_end; relative_size *= 2) {
+                        double os_error = 0;
+                        double rs_error = 0;
+
+                        for (size_t i = 0; i < iterations; i++) {
+                            std::vector<std::vector<Type>> rs_splitters;
+                            std::vector<std::vector<Type>> os_splitters;
+                            std::vector<Type> sequence_all;
+                            std::vector<std::vector<Type>> sequence_gather;
+
+                            iteration(I++, rank, b * k * relative_size * P, P,
+                                      1, ctx, rng, generator_type, b, k,
+                                      reservoir_size, quantiles, rs_splitters,
+                                      os_splitters, sequence_gather);
+
+                            for (auto &sequence : sequence_gather) {
+                                sequence_all.insert(sequence_all.end(),
+                                                    std::make_move_iterator(
+                                                            sequence.begin()),
+                                                    std::make_move_iterator(
+                                                            sequence.end()));
+                            }
+                            std::sort(sequence_all.begin(), sequence_all.end());
+
+                            if (rank == 0) {
+                                os_error += calculate_error(sequence_all,
+                                                                  os_splitters[0]);
+                                rs_error += calculate_error(sequence_all,
+                                                                  rs_splitters[0]);
+                            }
+                        }
+
+                        if (rank == 0) {
+                            result_file << relative_size << "\t"
+                                        << os_error / iterations << "\t"
+                                        << rs_error / iterations << "\n";
+                        }
+                    }
+                    if (rank == 0) {
+                        LOG1 << "Result written to sampling_relative_size.dat";
+                        result_file.close();
+                    }
                 }
             });
 }
