@@ -127,7 +127,7 @@ class MultiSequenceSelector
     using ValueType = typename SequenceAdapterType::ValueType;
     using SequenceAdapters = typename std::vector<SequenceAdapterType>;
 
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
     static constexpr bool self_verify = debug && common::g_debug_mode;
 
     //! Set this variable to true to enable generation and output of selection
