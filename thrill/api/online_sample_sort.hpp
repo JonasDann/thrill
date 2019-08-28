@@ -198,7 +198,7 @@ public:
         for (size_t s = 0; s < splitter_count; s++) {
             for (size_t r = 0; r < run_count; r++) {
                 local_ranks[s][r] = run_files_[r]->GetFastIndexOf(
-                        final_splitters_[s], 0, 0, run_files_[r]->num_items(), 
+                        final_splitters_[s], run_files_[r]->num_items(),
                         comparator_);
             }
         }

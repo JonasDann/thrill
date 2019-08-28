@@ -481,7 +481,7 @@ private:
         // Calculate splitters
         auto splitter_count = p_ - 1;
         auto run_count = run_files_.size();
-        /*auto max_run_count = context_.net.AllReduce(run_count,
+        auto max_run_count = context_.net.AllReduce(run_count,
                 [](const size_t& a, const size_t& b){
                     return std::max(a, b);
                 });
@@ -490,7 +490,7 @@ private:
             run_files_.emplace_back(context_.template GetSampledFilePtr
                     <ValueType>(this));
         }
-        run_count = max_run_count;*/
+        run_count = max_run_count;
 
         if (run_count > 1) {
             LOG << "Calculate " << splitter_count << " splitters for " << run_count

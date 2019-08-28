@@ -93,7 +93,8 @@ int main(int argc, char *argv[]) {
                     auto sorted = api::Generate(
                             ctx, element_count,
                             [&ctx, &element_count, &generator_type, &rng](size_t i) -> Record {
-                                auto global_idx = i * ctx.num_workers() + ctx.my_rank();
+                                auto real_i = i - element_count * ctx.my_rank() / ctx.num_workers();
+                                auto global_idx = real_i * ctx.num_workers() + ctx.my_rank();
                                 uint64_t key = generator(global_idx, element_count, generator_type, rng);
                                 Record r{key, key};
                                 return r;

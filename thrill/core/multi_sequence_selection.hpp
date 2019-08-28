@@ -52,7 +52,8 @@ public:
     size_t GetIndexOf(const ValueType& item, size_t tie, size_t left,
             size_t right, const Comparator& comparator)
     {
-        return file_->GetFastIndexOf(item, tie, left, right, comparator);
+        (void) left; (void) right;
+        return file_->GetFastIndexOf(item, tie, comparator);
     }
 
     size_t ItemsStartIn(size_t i) {
@@ -126,7 +127,7 @@ class MultiSequenceSelector
     using ValueType = typename SequenceAdapterType::ValueType;
     using SequenceAdapters = typename std::vector<SequenceAdapterType>;
 
-    static constexpr bool debug = false;
+    static constexpr bool debug = true;
     static constexpr bool self_verify = debug && common::g_debug_mode;
 
     //! Set this variable to true to enable generation and output of selection
@@ -198,26 +199,11 @@ protected:
         }
     };
 
-    class LessPivot
-    {
-    public:
-        explicit LessPivot(const Comparator& comparator) :
-            comparator_(comparator) {}
-
-        bool operator () (const Pivot& a, const Pivot& b) const {
-            auto equal = !comparator_(a.value, b.value) &&
-                    !comparator_(b.value, a.value);
-            auto worker_equal = a.worker_rank == b.worker_rank;
-            auto seq_equal = a.sequence_idx == b.sequence_idx;
-            return comparator_(a.value, b.value) ||
-                    (equal && a.worker_rank < b.worker_rank) ||
-                    (equal && worker_equal && a.sequence_idx < b.sequence_idx) ||
-                    (equal && worker_equal && seq_equal && a.tie_idx < b.tie_idx);
-        }
-
-    private:
-        Comparator comparator_;
-    };
+    bool EqualPivot(const Pivot& a, const Pivot& b) {
+        auto equal = !comparator_(a.value, b.value) &&
+                     !comparator_(b.value, a.value);
+        return equal && a.tie_idx == b.tie_idx;
+    }
 
     using StatsTimer = common::StatsTimerBaseStopped<stats_enabled>;
 
@@ -489,15 +475,16 @@ protected:
      */
     void GetGlobalRanks(
             SequenceAdapters& sequences,
-            const std::vector<Pivot>& pivots,
+            std::vector<Pivot>& pivots,
             std::vector<size_t>& global_ranks,
             std::vector<std::vector<size_t>>& out_local_ranks,
-            const std::vector<std::vector<size_t>>& left,
-            const std::vector<std::vector<size_t>>& width) {
+            std::vector<std::vector<size_t>>& left,
+            std::vector<std::vector<size_t>>& width) {
 
         // Simply get the rank of each pivot in each file. Sum the ranks up
         // locally.
-        std::vector<std::map<Pivot, size_t, LessPivot>> index_lookup(sequences.size(), std::map<Pivot, size_t, LessPivot>(LessPivot(comparator_)));
+        std::vector<Pivot*> last_pivot = std::vector<Pivot*>(sequences.size(), nullptr);
+        std::vector<size_t> last_idx = std::vector<size_t>(sequences.size(), 0);
         for (size_t r = 0; r < pivots.size(); r++) {
             size_t rank = 0;
             for (size_t s = 0; s < sequences.size(); s++) {
@@ -505,14 +492,26 @@ protected:
 
                 size_t idx = left[r][s];
                 if (width[r][s] > 0) {
-                    if (index_lookup[s].find(pivots[r]) != index_lookup[s].end()) {
-                        idx = index_lookup[s][pivots[r]];
+                    if (last_pivot[s] && EqualPivot(*last_pivot[s], pivots[r])) {
+                        idx = last_idx[s];
                     } else {
                         idx = sequences[s].template GetIndexOf<Comparator>(
                                 pivots[r].value, pivots[r].tie_idx,
                                 left[r][s], left[r][s] + width[r][s],
                                 comparator_);
-                        index_lookup[s][pivots[r]] = idx;
+                        last_pivot[s] = &pivots[r];
+                        last_idx[s] = idx;
+                    }
+
+                    if (idx > left[r][s] + width[r][s]) {
+                        width[r][s] = idx - left[r][s];
+                        if (left[r][s] + width[r][s] < sequences[s].size()) {
+                            width[r][s]++;
+                        }
+                    }
+                    if (idx < left[r][s]) {
+                        width[r][s] += left[r][s] - idx;
+                        left[r][s] = idx;
                     }
                 }
 
@@ -562,8 +561,7 @@ protected:
                 size_t local_rank = local_ranks[r][s];
                 size_t old_width = width[r][s];
 
-                if (width[r][s] == 0 || local_rank < left[r][s] ||
-                    local_rank > left[r][s] + width[r][s])
+                if (width[r][s] == 0)
                     continue;
 
                 if (target_ranks[r] > global_ranks[r]) {
@@ -623,7 +621,7 @@ public:
         // Search range bounds.
         std::vector<std::vector<size_t>>
                 left(splitter_count, std::vector<size_t>(seq_count)),
-                width(splitter_count, std::vector<size_t>(seq_count));
+                width(splitter_count, std::vector<size_t>(seq_count, 1));
 
         auto stream = this->context_.template GetNewStream<data::CatStream>(
                 this->dia_id_);

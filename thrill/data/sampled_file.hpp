@@ -102,31 +102,32 @@ public:
      * The search is sped up by the Block samples.
      */
     template <typename Comparator = std::less<ItemType>>
-    size_t GetFastIndexOf(const ItemType& item, size_t tie, size_t left,
-            size_t right, const Comparator& less = Comparator()) const {
+    size_t GetFastIndexOf(const ItemType& item, size_t tie,
+            const Comparator& less = Comparator()) const {
         LOG << "item: " << item;
         // TODO replace with custom binary search with tie breaker
         size_t block_index = std::lower_bound(block_samples_.begin(),
                 block_samples_.end(), item, less) - block_samples_.begin();
         size_t result = 0;
-        if (block_index > 0) {
-            block_index--;
+        if (num_items() > 0 && (block_index > 0 || !less(item, block_samples_[block_index]))) {
+            if (block_index > 0) {
+                block_index--;
+            }
 
             size_t block_left = 0;
             if (block_index > 0) {
                 block_left = num_items_sum_[block_index - 1];
             }
-            // TODO Tie
-            /*if (item == block_samples_[block_index] && block_index > 0) {
-                block_left = num_items_sum_[block_index - 1];
-            }*/
-            size_t block_right = num_items_sum_[block_index];
+            while (block_index < num_blocks() - 1 && !less(item, block_samples_[block_index])) {
+                block_index++;
+            }
+            auto block_right = num_items_sum_[block_index];
             LOG << "block_index: " << block_index << " / " << block_samples_.size();
             LOG << "range: [" << block_left << ", " << block_right << ")";
             result = GetIndexOf<ItemType, Comparator>(item, tie, block_left, block_right, less);
         }
         if (self_verify) {
-            auto real_index = GetIndexOf<ItemType, Comparator>(item, tie, left, right, less);
+            auto real_index = GetIndexOf<ItemType, Comparator>(item, tie, 0, num_items(), less);
             LOG << "result: " << result << " / " << real_index;
             die_unless(result == real_index);
         }
