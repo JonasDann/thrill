@@ -247,15 +247,15 @@ int main(int argc, char *argv[]) {
                 const size_t P = ctx.num_workers();
                 const size_t rank = ctx.my_rank();
 
-                const size_t num_splitters = 9; // TODO console parameter
-
-                std::vector<double> quantiles(num_splitters);
-                for (size_t s = 0; s < num_splitters; s++) {
-                    quantiles[s] = static_cast<double>(s + 1) / (num_splitters + 1);
-                }
-
                 if (benchmark == "error") {
                     n -= n % P;
+
+                    const size_t num_splitters = 9;
+
+                    std::vector<double> quantiles(num_splitters);
+                    for (size_t s = 0; s < num_splitters; s++) {
+                        quantiles[s] = static_cast<double>(s + 1) / (num_splitters + 1);
+                    }
 
                     const size_t num_measurements = 10;
                     const size_t b = 4;
@@ -264,7 +264,6 @@ int main(int argc, char *argv[]) {
                     std::string generators[] = {"uni", "sort", "dup", "window"};
 
                     std::vector<std::vector<double>> errors(8);
-                    std::vector<std::vector<double>> wrong_processors(8);
 
                     for (size_t g = 0; g < 4; g++) {
                         std::vector<std::vector<Type>> rs_splitters;
@@ -290,9 +289,67 @@ int main(int argc, char *argv[]) {
                                 errors[g * 2 + 1].push_back(calculate_error(
                                         sequence_all, os_splitters[m]));
                             }
+                        }
+                    }
 
+                    if (rank == 0) {
+                        std::ofstream errors_file;
+                        errors_file.open("sampling_convergence.dat");
+
+                        for (size_t m = 0; m < num_measurements; m++) {
+                            auto measurement_point = 100 * ((m + 1) * n / num_measurements) / n;
+                            errors_file << measurement_point << "\t";
+                            for (size_t d = 0; d < errors.size(); d++) {
+                                errors_file << errors[d][m];
+                                if (d == errors.size() - 1) {
+                                    errors_file << "\n";
+                                } else {
+                                    errors_file << "\t";
+                                }
+                            }
+                        }
+
+                        LOG1 << "Sampling convergence written to sampling_convergence.dat";
+                        errors_file.close();
+
+
+                    }
+                } else if (benchmark == "wrong") {
+                    n -= n % P;
+
+                    const size_t num_splitters = 303;
+
+                    std::vector<double> quantiles(num_splitters);
+                    for (size_t s = 0; s < num_splitters; s++) {
+                        quantiles[s] = static_cast<double>(s + 1) / (num_splitters + 1);
+                    }
+
+                    const size_t num_measurements = 10;
+                    const size_t b = 4;
+                    const size_t k = 1000;
+
+                    std::string generators[] = {"uni", "sort", "dup", "window"};
+
+                    std::vector<std::vector<double>> wrong_processors(8);
+
+                    for (size_t g = 0; g < 4; g++) {
+                        std::vector<std::vector<Type>> rs_splitters;
+                        std::vector<std::vector<Type>> os_splitters;
+                        std::vector<Type> sequence_all;
+                        std::vector<std::vector<Type>> sequence_gather;
+
+                        iteration(0, rank, n, P, num_measurements, ctx, rng,
+                                  generators[g], b, k, num_splitters, quantiles, rs_splitters,
+                                  os_splitters, sequence_gather);
+
+                        for (auto& sequence : sequence_gather) {
+                            sequence_all.insert(sequence_all.end(),
+                                                sequence.begin(), sequence.end());
+                        }
+                        std::sort(sequence_all.begin(), sequence_all.end());
+
+                        if (rank == 0) {
                             // Calculate number of elements on wrong host
-                            // TODO split up wrong processor and error
                             LOG1 << "";
                             LOG1 << "WRONG PROCESSOR";
                             for (size_t x = 0; x < num_measurements; x++) {
@@ -312,8 +369,8 @@ int main(int argc, char *argv[]) {
 
                                 for (auto& seq : sequence_gather) {
                                     run.insert(run.end(),
-                                            seq.begin() + run_start,
-                                            seq.begin() + run_end);
+                                               seq.begin() + run_start,
+                                               seq.begin() + run_end);
                                 }
 
                                 std::sort(run.begin(), run.end());
@@ -341,37 +398,35 @@ int main(int argc, char *argv[]) {
                     }
 
                     if (rank == 0) {
-                        std::ofstream errors_file;
-                        errors_file.open("sampling_convergence.dat");
-
                         std::ofstream wrong_processor_file;
                         wrong_processor_file.open("wrong_processor.dat");
 
                         for (size_t m = 0; m < num_measurements; m++) {
                             auto measurement_point = 100 * ((m + 1) * n / num_measurements) / n;
-                            errors_file << measurement_point << "\t";
                             wrong_processor_file << measurement_point << "\t";
-                            for (size_t d = 0; d < errors.size(); d++) {
-                                errors_file << errors[d][m];
+
+                            for (size_t d = 0; d < wrong_processors.size(); d++) {
                                 wrong_processor_file << num_measurements * wrong_processors[d][m] / n;
-                                if (d == errors.size() - 1) {
-                                    errors_file << "\n";
+                                if (d == wrong_processors.size() - 1) {
                                     wrong_processor_file << "\n";
                                 } else {
-                                    errors_file << "\t";
                                     wrong_processor_file << "\t";
                                 }
                             }
                         }
-
-                        LOG1 << "Sampling convergence written to sampling_convergence.dat";
-                        errors_file.close();
 
                         LOG1 << "Wrong processor per run written to wrong_processor.dat";
                         wrong_processor_file.close();
                     }
                 } else if (benchmark == "histogram") {
                     n -= n % P;
+
+                    const size_t num_splitters = 9;
+
+                    std::vector<double> quantiles(num_splitters);
+                    for (size_t s = 0; s < num_splitters; s++) {
+                        quantiles[s] = static_cast<double>(s + 1) / (num_splitters + 1);
+                    }
 
                     const size_t b = 8 / P;
                     const size_t k = 119;
@@ -493,6 +548,15 @@ int main(int argc, char *argv[]) {
                         os_file.close();
                     }
                 } else if (benchmark == "parameter") {
+                    n -= n % P;
+
+                    const size_t num_splitters = 9;
+
+                    std::vector<double> quantiles(num_splitters);
+                    for (size_t s = 0; s < num_splitters; s++) {
+                        quantiles[s] = static_cast<double>(s + 1) / (num_splitters + 1);
+                    }
+
                     const size_t b_start = 2;
                     const size_t b_end = 50;
                     const size_t b_step = 5;
@@ -546,6 +610,15 @@ int main(int argc, char *argv[]) {
                         result_file.close();
                     }
                 } else if (benchmark == "size") {
+                    n -= n % P;
+
+                    const size_t num_splitters = 9;
+
+                    std::vector<double> quantiles(num_splitters);
+                    for (size_t s = 0; s < num_splitters; s++) {
+                        quantiles[s] = static_cast<double>(s + 1) / (num_splitters + 1);
+                    }
+
                     size_t b = 4;
                     size_t k = 100;
                     size_t reservoir_size = b * k;
