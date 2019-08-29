@@ -621,7 +621,16 @@ public:
         // Search range bounds.
         std::vector<std::vector<size_t>>
                 left(splitter_count, std::vector<size_t>(seq_count)),
-                width(splitter_count, std::vector<size_t>(seq_count, 1));
+                width(splitter_count, std::vector<size_t>(seq_count));
+
+        // Initialize all lefts with 0 and widths with 1 if sequence.size() > 0.
+        for (size_t r = 0; r < splitter_count; r++) {
+            for (size_t q = 0; q < sequences.size(); q++) {
+                if (sequences[q].size() > 0) {
+                    width[r][q] = 1;
+                }
+            }
+        }
 
         auto stream = this->context_.template GetNewStream<data::CatStream>(
                 this->dia_id_);

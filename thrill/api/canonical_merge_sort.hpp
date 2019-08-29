@@ -387,19 +387,22 @@ private:
     void ScatterRun(std::vector<ValueType>& run_seq,
                     data::StreamData::Writers& data_writers,
                     std::vector<size_t>& offsets) {
-        size_t run_size = run_seq.size();
         size_t my_rank = context_.my_rank();
         size_t worker_count = offsets.size();
         size_t worker_rank = (my_rank + 1) % worker_count;
-        size_t i = offsets[my_rank] % run_size;
-        LOG0 << "Worker rank " << worker_rank << ".";
+        size_t i = offsets[my_rank];
+        if (my_rank + 1 >= worker_count) // last worker
+            i = 0;
+        LOG0 << "Worker rank " << worker_rank << " (" << i << " | "
+             << offsets[worker_rank] << ").";
         while (worker_rank != my_rank || offsets[worker_rank] > i) {
             if (worker_rank != my_rank && offsets[worker_rank] <= i) {
                 data_writers[worker_rank].Close();
                 if (worker_rank + 1 >= worker_count) // last worker
-                    i %= run_size;
+                    i = 0;
                 worker_rank = (worker_rank + 1) % worker_count;
-                LOG0 << "Worker rank " << worker_rank << ".";
+                LOG0 << "Worker rank " << worker_rank << " (" << i << " | "
+                     << offsets[worker_rank] << ").";
             } else {
                 auto next = run_seq[i];
                 data_writers[worker_rank].template Put<ValueType>(next);
@@ -446,6 +449,7 @@ private:
             return element[0];
         });
         offsets[splitter_count] = current_run_[0].size();
+        LOG << "Offsets: " << offsets;
 
         LOG << "Scatter current run.";
         timer_pre_op_scatter_.Start();
