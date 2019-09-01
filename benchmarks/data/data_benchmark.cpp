@@ -614,14 +614,15 @@ public:
             for (size_t target = 0; target < ctx.num_workers(); target++) {
                 pool.enqueue(
                     [&, target]() {
+                        auto real_target = (target + ctx.my_rank()) % ctx.num_workers();
                         auto data = Generator<Type>(
-                            bytes_ / ctx.num_workers(), min_size_, max_size_);
+                            bytes_ / (ctx.num_workers() * ctx.num_workers()), min_size_, max_size_);
 
                         StatsTimerStart write_timer;
                         while (data.HasNext()) {
-                            writers[target].Put(data.Next());
+                            writers[real_target].Put(data.Next());
                         }
-                        writers[target].Close();
+                        writers[real_target].Close();
                         write_timer.Stop();
                         // REVIEW(ts): this is a data race!
                         write_time = std::max(write_time, write_timer.Microseconds());
