@@ -129,7 +129,7 @@ void gather_sequence(api::Context& ctx, const size_t rank, const size_t P,
 }
 
 Type generator(size_t i, size_t n, const std::string& generator_type,
-        RandomGenerator rng) {
+        RandomGenerator& rng) {
     std::uniform_int_distribution<int> uni;
     std::exponential_distribution<double> expo(2.0);
     if (generator_type == "uni") {
