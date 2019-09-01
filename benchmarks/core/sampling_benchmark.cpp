@@ -428,8 +428,8 @@ int main(int argc, char *argv[]) {
                         quantiles[s] = static_cast<double>(s + 1) / (num_splitters + 1);
                     }
 
-                    const size_t b = 8 / P;
-                    const size_t k = 119;
+                    const size_t b = 4;
+                    const size_t k = 1000;
 
                     std::vector<int> rs_histogram(n);
                     std::vector<int> os_histogram(n);
@@ -444,7 +444,7 @@ int main(int argc, char *argv[]) {
                         std::vector<std::vector<Type>> sequence_gather;
 
                         iteration(i, rank, n, P, 1, ctx, rng,
-                                  generator_type, b, k, 1000 / P, quantiles, rs_splitters,
+                                  generator_type, b, k, b * k, quantiles, rs_splitters,
                                   os_splitters, sequence_gather);
 
                         for (auto& sequence : sequence_gather) {
