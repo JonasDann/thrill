@@ -673,6 +673,45 @@ int main(int argc, char *argv[]) {
                         LOG1 << "Result written to sampling_relative_size.dat";
                         result_file.close();
                     }
+                } else if (benchmark == "generators") {
+                    n -= n % P;
+
+                    const size_t nP = n / P;
+
+                    std::string generators[] = {"uni", "sort", "dup", "window"};
+
+                    for (size_t g = 0; g < 4; g++) {
+                        std::vector<Type> sequence;
+                        sequence.reserve(nP);
+                        for (size_t i = 0; i < nP; i++) {
+                            // Generate and insert element
+                            auto global_idx = i * P + rank;
+                            sequence.emplace_back(generator(global_idx, n,
+                                                            generators[g],
+                                                            rng));
+                        }
+
+                        std::vector<std::vector<std::vector<Type>>>
+                                sequence_gathers(4);
+                        gather_sequence(ctx, rank, P, sequence,
+                                        sequence_gathers[g]);
+
+                        if (rank == 0) {
+                            std::ofstream result_file;
+                            auto filename =
+                                    "generator_" + generators[g] + ".dat";
+                            result_file.open(filename);
+
+                            for (size_t i = 0; i < n; i++) {
+                                auto element = sequence_gathers[g][i % P][i /
+                                                                          P];
+                                result_file << i << "\t" << element << "\n";
+                            }
+
+                            LOG1 << "Result written to " + filename;
+                            result_file.close();
+                        }
+                    }
                 }
             });
 }
