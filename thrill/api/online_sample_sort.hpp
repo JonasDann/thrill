@@ -89,7 +89,7 @@ public:
 
         // Count of all workers (and count of target partitions).
         p_ = context_.num_workers();
-        run_capacity_ = (context_.mem_limit() / 2) / sizeof(ValueType);
+        run_capacity_ = (context_.mem_limit() / 4) / sizeof(ValueType);
         LOG << "Run capacity: " << run_capacity_;
     }
 
