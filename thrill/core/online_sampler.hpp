@@ -79,7 +79,7 @@ template <
 class OnlineSampler {
     using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of sampling
     //! stats

@@ -1667,7 +1667,7 @@ public:
      * \ingroup dia_dops
      */
     template <typename CompareFunction = std::less<ValueType> >
-    auto OnlineSampleSort(const CompareFunction& compare_function = CompareFunction()) const;
+    auto OnlineSampleSort(const size_t r = 1, const CompareFunction& compare_function = CompareFunction()) const;
 
     /*!
      * Merge is a DOp, which merges two sorted DIAs to a single sorted DIA.

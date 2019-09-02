@@ -78,6 +78,10 @@ int main(int argc, char* argv[]) {
     clp.add_param_string("generator", generator_type,
                          "Type of generator (uni, sort, ones, almost, window, dup).");
 
+    size_t random = 1;
+    clp.add_size_t('r', "random", random,
+                        "Randomization factor (default: 1).");
+
     if (!clp.process(argc, argv)) {
         return -1;
     }
@@ -85,7 +89,7 @@ int main(int argc, char* argv[]) {
     clp.print_result();
 
     api::Run(
-            [&iterations, &size, &generator_type](api::Context& ctx) {
+            [&iterations, &size, &generator_type, &random](api::Context& ctx) {
                 for (int i = 0; i < iterations; i++) {
                     std::random_device rd;
                     RandomGenerator rng(rd());
@@ -101,7 +105,7 @@ int main(int argc, char* argv[]) {
                                 Record r{key, key};
                                 return r;
                             })
-                            .OnlineSampleSort();
+                            .OnlineSampleSort(random);
                     if (self_verify) {
                         auto result = sorted.AllGather();
                         die_unless(result.size() == element_count);

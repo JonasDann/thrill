@@ -71,13 +71,14 @@ public:
     template <typename ParentDIA>
     OnlineSampleSortNode(const ParentDIA& parent,
             const Comparator& comparator,
+            const size_t r = 1,
             const SortAlgorithm& sort_algorithm = SortAlgorithm())
         : Super(parent.ctx(), "Online Sample Sort", { parent.id() },
                 { parent.node() }),
           comparator_(comparator), sort_algorithm_(sort_algorithm),
           parent_stack_empty_(ParentDIA::stack_empty),
           sampler_(b_, k_, parent.ctx(), this->dia_id(), comparator,
-                   sort_algorithm)
+                   sort_algorithm, r)
     {
         // Hook PreOp(s).
         auto pre_op_fn = [this](const ValueType& input) {
@@ -89,7 +90,7 @@ public:
 
         // Count of all workers (and count of target partitions).
         p_ = context_.num_workers();
-        run_capacity_ = (context_.mem_limit() / 4) / sizeof(ValueType);
+        run_capacity_ = (context_.mem_limit() / 2) / sizeof(ValueType);
         LOG << "Run capacity: " << run_capacity_;
     }
 
@@ -680,7 +681,7 @@ public:
 
 template <typename ValueType, typename Stack>
 template <typename CompareFunction>
-auto DIA<ValueType, Stack>::OnlineSampleSort(
+auto DIA<ValueType, Stack>::OnlineSampleSort(const size_t r,
         const CompareFunction& compare_function) const {
     assert(IsValid());
 
@@ -705,7 +706,7 @@ auto DIA<ValueType, Stack>::OnlineSampleSort(
         "CompareFunction has the wrong output type (should be bool)");
 
     auto node = tlx::make_counting<OnlineSampleSortNode>(*this, 
-            compare_function);
+            compare_function, r);
 
     return DIA<ValueType>(node);
 }
