@@ -257,8 +257,11 @@ public:
                 local_size++;
             }
             timer_merge_.Stop();
-            LOG << "Finished merging (first element: " << first_element
-                << ", last element: " << last_element << ").";
+            if (debug) {
+                LOG << "Finished merging "
+                    << "(first element: " << tlx::wrap_unp(first_element)
+                    << ", last element: " << tlx::wrap_unp(last_element) << ").";
+            }
         }
 
         timer_push_data.Stop();
@@ -555,7 +558,7 @@ private:
     }
 };
 
-class DefaultSortAlgorithm
+class DefaultSortAlgorithm2
 {
 public:
     template <typename Iterator, typename CompareFunction>
@@ -571,7 +574,7 @@ auto DIA<ValueType, Stack>::CanonicalMergeSort(
     assert(IsValid());
 
     using CanonicalMergeSortNode = api::CanonicalMergeSortNode<
-        ValueType, CompareFunction, DefaultSortAlgorithm>;
+        ValueType, CompareFunction, DefaultSortAlgorithm2>;
 
     static_assert(
         std::is_convertible<

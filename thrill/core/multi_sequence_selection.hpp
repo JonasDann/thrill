@@ -126,7 +126,8 @@ public:
                 >::value,
                 "Comparator must return boolean.");
 
-        LOG << "MultiSequenceSelectorVectorSequenceAdapter::GetIndexOf() looking for item " << item << " tie " << tie
+        LOG << "MultiSequenceSelectorVectorSequenceAdapter::GetIndexOf()"
+            << " looking for item " << tlx::wrap_unp(item) << " tie " << tie
             << " in range [" << left << "," << right << ") ="
             << " size " << right - left;
 
@@ -139,7 +140,7 @@ public:
             size_t mid = (right + left) >> static_cast<size_t>(1);
             LOG << "left: " << left << "right: " << right << "mid: " << mid;
             ValueType currentItem = std::vector<ValueType>::operator [](mid);
-            LOG << "Item at mid: " << currentItem;
+            LOG << "Item at mid: " << tlx::wrap_unp(currentItem);
             if (less(item, currentItem) ||
                 (!less(item, currentItem) && !less(currentItem, item) &&
                   tie <= mid)) {
@@ -213,7 +214,7 @@ protected:
     static std::string VToStr(const std::vector<Pivot>& data) {
         std::stringstream oss;
         for (const Pivot& elem : data) {
-            oss << "(" << elem.value
+            oss << "(" << tlx::wrap_unp(elem.value)
                 << ", tie_idx: " << elem.tie_idx
                 << ", len: " << elem.segment_len << ") ";
         }
@@ -603,7 +604,8 @@ protected:
                         pivots[r].sequence_idx == s) {
                         LOG << "[" << stats_.iterations_
                             << "] increment (split: " << r << " seq: " << s
-                            << " pivot: " << pivots[r].value << ").";
+                            << " pivot: " << tlx::wrap_unp(pivots[r].value)
+                            << ").";
                         local_rank++;
                     }
                     width[r][s] -= local_rank - left[r][s];

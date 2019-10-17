@@ -19,6 +19,7 @@
 #include <tlx/logger.hpp>
 #include <tlx/logger/array.hpp>
 #include <tlx/logger/tuple.hpp>
+#include <tlx/logger/wrap_unprintable.hpp>
 #include <tlx/meta/call_foreach_tuple.hpp>
 
 namespace thrill {

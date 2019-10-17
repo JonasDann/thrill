@@ -547,7 +547,8 @@ size_t File::GetIndexOf(
             >::value,
         "Comperator must return boolean.");
 
-    LOG << "File::GetIndexOf() looking for item " << item << " tie " << tie
+    LOG << "File::GetIndexOf() looking for item "
+        << tlx::wrap_unp(item) << " tie " << tie
         << " in range [" << left << "," << right << ") ="
         << " size " << right - left;
 
@@ -560,7 +561,7 @@ size_t File::GetIndexOf(
         size_t mid = (right + left) >> 1;
         LOG << "left: " << left << "right: " << right << "mid: " << mid;
         ItemType cur = GetItemAt<ItemType>(mid);
-        LOG << "Item at mid: " << cur;
+        LOG << "Item at mid: " << tlx::wrap_unp(cur);
         if (less(item, cur) ||
             (!less(item, cur) && !less(cur, item) && tie <= mid)) {
             right = mid;

@@ -58,7 +58,8 @@ public:
         auto sample_index = num_items();
         File::AppendBlock(b);
         block_samples_.emplace_back(GetItemAt<ItemType>(sample_index));
-        LOG << "AppendBlock (" << sample_index << ", " << block_samples_.back() << ")";
+        LOG << "AppendBlock (" << sample_index << ", "
+            << tlx::wrap_unp(block_samples_.back()) << ")";
     }
 
     //! Append a block to this file, the block must contain given number of
@@ -68,7 +69,8 @@ public:
         auto sample_index = num_items();
         File::AppendBlock(std::move(b));
         block_samples_.emplace_back(GetItemAt<ItemType>(sample_index));
-        LOG << "AppendBlockMove (" << sample_index << ", " << block_samples_.back() << ")";
+        LOG << "AppendBlockMove (" << sample_index << ", "
+            << tlx::wrap_unp(block_samples_.back()) << ")";
     }
 
     //! Append a block to this file, the block must contain given number of
@@ -90,7 +92,8 @@ public:
         auto sample_index = num_items();
         AppendBlock(std::move(b).MoveToBlock(), is_last_block);
         block_samples_.emplace_back(GetItemAt<ItemType>(sample_index));
-        LOG << "AppendPinnedBlock (" << sample_index << ", " << block_samples_.back() << ")";
+        LOG << "AppendPinnedBlock (" << sample_index << ", "
+            << tlx::wrap_unp(block_samples_.back()) << ")";
     }
 
     /*!
@@ -104,7 +107,7 @@ public:
     template <typename Comparator = std::less<ItemType>>
     size_t GetFastIndexOf(const ItemType& item, size_t tie,
             const Comparator& less = Comparator()) const {
-        LOG << "item: " << item;
+        LOG << "item: " << tlx::wrap_unp(item);
         // TODO replace with custom binary search with tie breaker
         size_t block_index = std::lower_bound(block_samples_.begin(),
                 block_samples_.end(), item, less) - block_samples_.begin();
