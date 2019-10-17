@@ -268,7 +268,7 @@ private:
             sequences[i] = FileSequenceAdapter(files_[i]);
 
         core::run_multi_sequence_selection<FileSequenceAdapter, Comparator>
-                (context_, comparator_, sequences, &local_ranks, p - 1);
+                (context_, comparator_, sequences, local_ranks, p - 1);
 
         LOG << "Creating channels";
 
