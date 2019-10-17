@@ -43,15 +43,12 @@ using RandomGenerator = std::mt19937_64;
 uint64_t generator(size_t i, size_t n, const std::string& generator_type,
                    RandomGenerator& rng) {
     std::uniform_int_distribution<int> uni;
-    std::exponential_distribution<double> expo(2.0);
     if (generator_type == "uni") {
         return uni(rng);
     } else if (generator_type == "sort") {
         return i;
     } else if (generator_type == "ones") {
         return 1;
-    } else if (generator_type == "almost") {
-        return 1; // TODO
     } else if (generator_type == "window") {
         size_t window_size = n * 10;
         return i + (uni(rng) % window_size);
@@ -74,7 +71,7 @@ int main(int argc, char *argv[]) {
 
     std::string generator_type;
     clp.add_param_string("generator", generator_type,
-                         "Type of generator (uni, sort, ones, almost, window, dup).");
+                         "Type of generator (uni, sort, ones, window, dup).");
 
     if (!clp.process(argc, argv)) {
         return -1;
