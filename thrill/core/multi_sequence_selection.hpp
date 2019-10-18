@@ -200,15 +200,15 @@ protected:
     Comparator comparator_;
 
     struct Pivot {
-        ValueType value;
-        size_t    tie_idx;
-        size_t    segment_len;
-        size_t    worker_rank;
-        size_t    sequence_idx;
+        ValueType               value;
+        size_t                  tie_idx;
+        size_t                  segment_len;
+        size_t                  worker_rank;
+        size_t                  sequence_idx;
 
         // ---[ Serialization ]-------------------------------------------------
 
-        static constexpr bool thrill_is_fixed_size = false;
+        static constexpr bool   thrill_is_fixed_size = false;
         static constexpr size_t thrill_fixed_size = 0;
 
         //! serialization with Thrill's serializer
@@ -232,7 +232,7 @@ protected:
             size_t sequence_idx = ar.template GetRaw<size_t>();
             return Pivot {
                 std::move(value),
-                    tie_idx, segment_len, worker_rank, sequence_idx };
+                tie_idx, segment_len, worker_rank, sequence_idx };
         }
     };
 
@@ -809,15 +809,15 @@ private:
     SortAlgorithm sort_algorithm_;
 
     struct BlockSample {
-        ValueType value;
-        size_t    idx;
-        size_t    size;
-        size_t    worker_rank;
-        size_t    sequence_idx;
+        ValueType               value;
+        size_t                  idx;
+        size_t                  size;
+        size_t                  worker_rank;
+        size_t                  sequence_idx;
 
         // ---[ Serialization ]-------------------------------------------------
 
-        static constexpr bool thrill_is_fixed_size = false;
+        static constexpr bool   thrill_is_fixed_size = false;
         static constexpr size_t thrill_fixed_size = 0;
 
         //! serialization with Thrill's serializer

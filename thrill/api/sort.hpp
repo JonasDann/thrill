@@ -22,6 +22,13 @@ namespace api {
 /******************************************************************************/
 // DIA::Sort()
 
+enum class SortingAlgorithm {
+    Default,
+    SampleSort,
+    CanonicalMergeSort,
+    OnlineSampleSort
+};
+
 class DefaultSortAlgorithm
 {
 public:
@@ -34,6 +41,9 @@ public:
 class DefaultSortConfig
 {
 public:
+    //! distributed sorting algorithm
+    static constexpr SortingAlgorithm algorithm_ = SortingAlgorithm::Default;
+
     //! base sequential sorting algorithm
     DefaultSortAlgorithm base_sort_;
 };
@@ -43,9 +53,6 @@ template <typename CompareFunction, typename SortConfig>
 auto DIA<ValueType, Stack>::Sort(const CompareFunction& compare_function,
                                  const SortConfig& sort_config) const {
     assert(IsValid());
-
-    using SortNode = api::SampleSortNode<
-        ValueType, CompareFunction, SortConfig>;
 
     static_assert(
         std::is_convertible<
@@ -65,10 +72,26 @@ auto DIA<ValueType, Stack>::Sort(const CompareFunction& compare_function,
             bool>::value,
         "CompareFunction has the wrong output type (should be bool)");
 
-    auto node = tlx::make_counting<SortNode>(
-        *this, compare_function, sort_config);
+    switch (sort_config.algorithm_)
+    {
+    default:
+    case SortingAlgorithm::Default:
+    case SortingAlgorithm::CanonicalMergeSort:
+        using CanonicalMergeSortNode = api::CanonicalMergeSortNode<
+            ValueType, CompareFunction, DefaultSortAlgorithm2>;
 
-    return DIA<ValueType>(node);
+        return DIA<ValueType>(
+            tlx::make_counting<CanonicalMergeSortNode>(
+                *this, compare_function));
+
+    case SortingAlgorithm::SampleSort:
+        using SampleSortNode = api::SampleSortNode<
+            ValueType, CompareFunction, SortConfig>;
+
+        return DIA<ValueType>(
+            tlx::make_counting<SampleSortNode>(
+                *this, compare_function, sort_config));
+    }
 }
 
 /******************************************************************************/

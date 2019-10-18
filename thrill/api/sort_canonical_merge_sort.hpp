@@ -60,10 +60,10 @@ template <
 class CanonicalMergeSortNode final : public DOpNode<ValueType>
 {
     // TODO Unit test
-    static constexpr bool debug = true;
+    static constexpr bool debug = false;
 
     //! Set this variable to true to enable generation and output of stats
-    static constexpr bool stats_enabled = true;
+    static constexpr bool stats_enabled = false;
 
     using Super = DOpNode<ValueType>;
     using Super::context_;
@@ -245,20 +245,20 @@ public:
                 this->PushItem(first_element);
                 local_size++;
             }
-            ValueType last_element;
+            // ValueType last_element;
             while (file_merge_tree.HasNext()) {
                 auto next = file_merge_tree.Next();
                 this->PushItem(next);
                 if (debug) {
-                    last_element = next;
+                    // last_element = next;
                 }
                 local_size++;
             }
             timer_merge_.Stop();
             if (debug) {
-                LOG << "Finished merging "
-                    << "(first element: " << tlx::wrap_unp(first_element)
-                    << ", last element: " << tlx::wrap_unp(last_element) << ").";
+                // LOG << "Finished merging "
+                //     << "(first element: " << tlx::wrap_unp(first_element)
+                //     << ", last element: " << tlx::wrap_unp(last_element) << ").";
             }
         }
 

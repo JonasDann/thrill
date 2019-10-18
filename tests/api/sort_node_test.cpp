@@ -209,7 +209,7 @@ TEST(Sort, SortZeroToThree) {
     api::RunLocalTests(start_func);
 }
 
-TEST(Sort, SortWithEmptyWorkers) {
+TEST(Sort, DISABLED_SortWithEmptyWorkers) {
 
     auto start_func =
         [](Context& ctx) {
@@ -233,7 +233,7 @@ TEST(Sort, SortWithEmptyWorkers) {
     api::RunLocalTests(start_func);
 }
 
-TEST(Sort, SortOneInteger) {
+TEST(Sort, DISABLED_SortOneInteger) {
 
     auto start_func =
         [](Context& ctx) {
