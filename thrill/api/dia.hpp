@@ -1582,28 +1582,15 @@ public:
      * \param compare_function Function, which compares two elements. Returns
      * true, if first element is smaller than second. False otherwise.
      *
-     * \ingroup dia_dops
-     */
-    template <typename CompareFunction = std::less<ValueType> >
-    auto Sort(const CompareFunction& compare_function = CompareFunction()) const;
-
-    /*!
-     * Sort is a DOp, which sorts a given DIA according to the given compare_function.
-     *
-     * \tparam CompareFunction Type of the compare_function.
-     *  Should be (ValueType,ValueType)->bool
-     *
-     * \param compare_function Function, which compares two elements. Returns
-     * true, if first element is smaller than second. False otherwise.
-     *
-     * \param sort_algorithm Algorithm class used to sort items. Merging is
-     * always done using a tournament tree with compare_function.
+     * \param sort_config Configuration class used to select and parameterize
+     * the sorter.
      *
      * \ingroup dia_dops
      */
-    template <typename CompareFunction, typename SortAlgorithm>
-    auto Sort(const CompareFunction& compare_function,
-              const SortAlgorithm& sort_algorithm) const;
+    template <typename CompareFunction = std::less<ValueType>,
+              typename SortConfig = class DefaultSortConfig>
+    auto Sort(const CompareFunction& compare_function = CompareFunction(),
+              const SortConfig& sort_config = SortConfig()) const;
 
     /*!
      * SortStable is a DOp, which sorts a given DIA stably according to the
@@ -1617,28 +1604,10 @@ public:
      *
      * \ingroup dia_dops
      */
-    template <typename CompareFunction = std::less<ValueType> >
-    auto SortStable(const CompareFunction& compare_function = CompareFunction()) const;
-
-    /*!
-     * SortStable is a DOp, which sorts a given DIA stably according to the
-     *  given compare_function.
-     *
-     * \tparam CompareFunction Type of the compare_function.
-     *  Should be (ValueType,ValueType)->bool
-     *
-     * \param compare_function Function, which compares two elements. Returns
-     * true, if first element is smaller than second. False otherwise.
-     *
-     * \param sort_algorithm Algorithm class used to stably sort items. Merging
-     * is always done using a tournament tree with compare_function. In order
-     * for the sorting to be stable, this must be a stable sorting algorithm.
-     *
-     * \ingroup dia_dops
-     */
-    template <typename CompareFunction, typename SortAlgorithm>
-    auto SortStable(const CompareFunction& compare_function,
-                    const SortAlgorithm& sort_algorithm) const;
+    template <typename CompareFunction = std::less<ValueType>,
+              typename SortConfig = class DefaultStableSortConfig>
+    auto SortStable(const CompareFunction& compare_function = CompareFunction(),
+                    const SortConfig& sort_config = SortConfig()) const;
 
     /*!
      * CanonicalMergeSort is a DOp, which sorts a given DIA according to the given compare_function.

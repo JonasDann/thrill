@@ -272,6 +272,15 @@ private:
     const size_t K_;
 };
 
+template <typename Type, size_t depth>
+class RadixSortConfig : public thrill::api::DefaultSortConfig
+{
+public:
+    RadixSortConfig(size_t K) : base_sort_(K) { }
+
+    thrill::common::RadixSort<Type, depth> base_sort_;
+};
+
 } // namespace dc3_local
 
 using namespace thrill; // NOLINT
@@ -326,7 +335,7 @@ DC3Recursive(const InputDIA& input_dia, size_t input_size, size_t K) {
         // sort triples by contained letters
         .Sort([](const IndexChars& a, const IndexChars& b) {
                   return a.chars < b.chars;
-              }, common::RadixSort<IndexChars, 3>(K));
+              }, dc3_local::RadixSortConfig<IndexChars, 3>(K));
 
     if (debug_print)
         triple_sorted.Keep().Print("triple_sorted");

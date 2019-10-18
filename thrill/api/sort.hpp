@@ -31,14 +31,21 @@ public:
     }
 };
 
+class DefaultSortConfig
+{
+public:
+    //! base sequential sorting algorithm
+    DefaultSortAlgorithm base_sort_;
+};
+
 template <typename ValueType, typename Stack>
-template <typename CompareFunction, typename SortAlgorithm>
+template <typename CompareFunction, typename SortConfig>
 auto DIA<ValueType, Stack>::Sort(const CompareFunction& compare_function,
-                                 const SortAlgorithm& sort_algorithm) const {
+                                 const SortConfig& sort_config) const {
     assert(IsValid());
 
     using SortNode = api::SampleSortNode<
-        ValueType, CompareFunction, SortAlgorithm>;
+        ValueType, CompareFunction, SortConfig>;
 
     static_assert(
         std::is_convertible<
@@ -59,15 +66,9 @@ auto DIA<ValueType, Stack>::Sort(const CompareFunction& compare_function,
         "CompareFunction has the wrong output type (should be bool)");
 
     auto node = tlx::make_counting<SortNode>(
-        *this, compare_function, sort_algorithm);
+        *this, compare_function, sort_config);
 
     return DIA<ValueType>(node);
-}
-
-template <typename ValueType, typename Stack>
-template <typename CompareFunction>
-auto DIA<ValueType, Stack>::Sort(const CompareFunction& compare_function) const {
-    return Sort(compare_function, DefaultSortAlgorithm());
 }
 
 /******************************************************************************/
@@ -82,16 +83,21 @@ public:
     }
 };
 
-template <typename ValueType, typename Stack>
-template <typename CompareFunction, typename SortAlgorithm>
-auto DIA<ValueType, Stack>::SortStable(
-    const CompareFunction& compare_function,
-    const SortAlgorithm& sort_algorithm) const {
+class DefaultStableSortConfig
+{
+public:
+    //! base sequential sorting algorithm
+    DefaultStableSortAlgorithm base_sort_;
+};
 
+template <typename ValueType, typename Stack>
+template <typename CompareFunction, typename SortConfig>
+auto DIA<ValueType, Stack>::SortStable(const CompareFunction& compare_function,
+                                       const SortConfig& sort_config) const {
     assert(IsValid());
 
     using SortStableNode = api::SampleSortNode<
-        ValueType, CompareFunction, SortAlgorithm, /* Stable */ true>;
+        ValueType, CompareFunction, SortConfig, /* Stable */ true>;
 
     static_assert(
         std::is_convertible<
@@ -112,17 +118,9 @@ auto DIA<ValueType, Stack>::SortStable(
         "CompareFunction has the wrong output type (should be bool)");
 
     auto node = tlx::make_counting<SortStableNode>(
-        *this, compare_function, sort_algorithm);
+        *this, compare_function, sort_config);
 
     return DIA<ValueType>(node);
-}
-
-
-template <typename ValueType, typename Stack>
-template <typename CompareFunction>
-auto DIA<ValueType, Stack>::SortStable(
-    const CompareFunction& compare_function) const {
-    return SortStable(compare_function, DefaultStableSortAlgorithm());
 }
 
 /******************************************************************************/

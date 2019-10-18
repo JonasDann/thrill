@@ -51,7 +51,7 @@ namespace api {
  *
  * \tparam CompareFunction Type of the compare function
  *
- * \tparam SortAlgorithm Type of the local sort function
+ * \tparam SortConfig Configuration for sorting
  *
  * \tparam Stable Whether or not to use stable sorting mechanisms
  *
@@ -60,7 +60,7 @@ namespace api {
 template <
     typename ValueType,
     typename CompareFunction,
-    typename SortAlgorithm,
+    typename SortConfig,
     bool Stable = false>
 class SampleSortNode final : public DOpNode<ValueType>
 {
@@ -123,10 +123,10 @@ public:
     template <typename ParentDIA>
     SampleSortNode(const ParentDIA& parent,
                    const CompareFunction& compare_function,
-                   const SortAlgorithm& sort_algorithm = SortAlgorithm())
+                   const SortConfig& sort_config)
         : Super(parent.ctx(), "Sort", { parent.id() }, { parent.node() }),
           compare_function_(compare_function),
-          sort_algorithm_(sort_algorithm),
+          sort_config_(sort_config),
           parent_stack_empty_(ParentDIA::stack_empty) {
         // Hook PreOp(s)
         auto pre_op_fn = [this](const ValueType& input) {
@@ -306,8 +306,8 @@ private:
     //! The comparison function which is applied to two elements.
     CompareFunction compare_function_;
 
-    //! Sort function class
-    SortAlgorithm sort_algorithm_;
+    //! Sort config class
+    SortConfig sort_config_;
 
     //! Whether the parent stack is empty
     const bool parent_stack_empty_;
@@ -767,7 +767,7 @@ private:
         // context_.block_pool().AdviseFree(vec.size() * sizeof(ValueType));
 
         timer_sort_.Start();
-        sort_algorithm_(vec.begin(), vec.end(), compare_function_);
+        sort_config_.base_sort_(vec.begin(), vec.end(), compare_function_);
         // common::qsort_two_pivots_yaroslavskiy(vec.begin(), vec.end(), compare_function_);
         // common::qsort_three_pivots(vec.begin(), vec.end(), compare_function_);
         timer_sort_.Stop();

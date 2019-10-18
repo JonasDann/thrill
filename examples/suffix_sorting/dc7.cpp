@@ -396,6 +396,15 @@ private:
     const size_t K_;
 };
 
+template <typename Type, size_t depth>
+class RadixSortConfig : public thrill::api::DefaultSortConfig
+{
+public:
+    RadixSortConfig(size_t K) : base_sort_(K) { }
+
+    thrill::common::RadixSort<Type, depth> base_sort_;
+};
+
 } // namespace dc7_local
 
 using namespace thrill; // NOLINT
@@ -462,7 +471,7 @@ DC7Recursive(const InputDIA& input_dia, size_t input_size, size_t K) {
         // sort tuples by contained letters
         .Sort([](const IndexChars& a, const IndexChars& b) {
                   return a.chars < b.chars;
-              }, common::RadixSort<IndexChars, 7>(K));
+              }, dc7_local::RadixSortConfig<IndexChars, 7>(K));
 
     if (debug_print)
         tuple_sorted.Keep().Print("tuple_sorted");
