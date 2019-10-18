@@ -18,6 +18,7 @@
 #include <thrill/api/context.hpp>
 #include <thrill/common/logger.hpp>
 #include <thrill/common/stats_counter.hpp>
+#include <thrill/data/serialization.hpp>
 
 #include <tlx/math/abs_diff.hpp>
 
@@ -204,6 +205,35 @@ protected:
         size_t    segment_len;
         size_t    worker_rank;
         size_t    sequence_idx;
+
+        // ---[ Serialization ]-------------------------------------------------
+
+        static constexpr bool thrill_is_fixed_size = false;
+        static constexpr size_t thrill_fixed_size = 0;
+
+        //! serialization with Thrill's serializer
+        template <typename Archive>
+        void ThrillSerialize(Archive& ar) const {
+            data::Serialization<Archive, ValueType>::Serialize(value, ar);
+            ar.template PutRaw<size_t>(tie_idx);
+            ar.template PutRaw<size_t>(segment_len);
+            ar.template PutRaw<size_t>(worker_rank);
+            ar.template PutRaw<size_t>(sequence_idx);
+        }
+
+        //! deserialization with Thrill's serializer
+        template <typename Archive>
+        static Pivot ThrillDeserialize(Archive& ar) {
+            ValueType value =
+                data::Serialization<Archive, ValueType>::Deserialize(ar);
+            size_t tie_idx = ar.template GetRaw<size_t>();
+            size_t segment_len = ar.template GetRaw<size_t>();
+            size_t worker_rank = ar.template GetRaw<size_t>();
+            size_t sequence_idx = ar.template GetRaw<size_t>();
+            return Pivot {
+                std::move(value),
+                    tie_idx, segment_len, worker_rank, sequence_idx };
+        }
     };
 
     //! Logging helper to print vectors of vectors of pivots.
@@ -696,11 +726,11 @@ public:
 
         if (this->context_.my_rank() == 0) {
             for (size_t p = 1; p < P; p++) {
-                auto foreign_samples = std::move(
-                    readers[p].template Next<std::vector<BlockSample> >());
+                auto foreign_samples =
+                    readers[p].template Next<std::vector<BlockSample> >();
 
-                samples.insert(samples.end(), foreign_samples.begin(),
-                               foreign_samples.end());
+                samples.insert(samples.end(),
+                               foreign_samples.begin(), foreign_samples.end());
             }
 
             // TODO replace with merges
@@ -710,7 +740,7 @@ public:
                                 return this->comparator_(a.value, b.value);
                             });
 
-            for (size_t i = 1; i < samples.size(); i++) {
+            for (size_t i = 1; i + 1 < samples.size(); i++) {
                 samples[i + 1].size += samples[i].size;
             }
             for (size_t i = samples.size() - 1; i > 0; i--) {
@@ -720,24 +750,22 @@ public:
 
             for (size_t r = 0; r < splitter_count; r++) {
                 // TODO init next lower_bound with this iterator
-                size_t block_index = std::lower_bound(samples.begin(),
-                                                      samples.end(),
-                                                      target_ranks[r],
-                                                      [](BlockSample b, size_t t) {
-                                                          return b.size < t;
-                                                      }) - samples.begin();
+                size_t block_index = std::lower_bound(
+                    samples.begin(), samples.end(),
+                    target_ranks[r],
+                    [](BlockSample b, size_t t) { return b.size < t; }
+                    ) - samples.begin();
 
                 if (block_index > 0) {
                     size_t b = 0;
-                    std::vector<std::vector<bool> > workers_sent(P,
-                                                                 std::vector<bool>(seq_count, false));
+                    std::vector<std::vector<bool> > workers_sent(
+                        P, std::vector<bool>(seq_count, false));
 
                     while (b < P * seq_count && block_index > 0) {
                         block_index--;
 
                         auto block_sample = samples[block_index];
-                        if (!workers_sent[block_sample.worker_rank]
-                            [block_sample.sequence_idx]) {
+                        if (!workers_sent[block_sample.worker_rank][block_sample.sequence_idx]) {
                             writers[block_sample.worker_rank].Put(
                                 ReplyBlockSample{
                                     block_sample.idx,
@@ -786,6 +814,34 @@ private:
         size_t    size;
         size_t    worker_rank;
         size_t    sequence_idx;
+
+        // ---[ Serialization ]-------------------------------------------------
+
+        static constexpr bool thrill_is_fixed_size = false;
+        static constexpr size_t thrill_fixed_size = 0;
+
+        //! serialization with Thrill's serializer
+        template <typename Archive>
+        void ThrillSerialize(Archive& ar) const {
+            data::Serialization<Archive, ValueType>::Serialize(value, ar);
+            ar.template PutRaw<size_t>(idx);
+            ar.template PutRaw<size_t>(size);
+            ar.template PutRaw<size_t>(worker_rank);
+            ar.template PutRaw<size_t>(sequence_idx);
+        }
+
+        //! deserialization with Thrill's serializer
+        template <typename Archive>
+        static BlockSample ThrillDeserialize(Archive& ar) {
+            ValueType value =
+                data::Serialization<Archive, ValueType>::Deserialize(ar);
+            size_t idx = ar.template GetRaw<size_t>();
+            size_t size = ar.template GetRaw<size_t>();
+            size_t worker_rank = ar.template GetRaw<size_t>();
+            size_t sequence_idx = ar.template GetRaw<size_t>();
+            return BlockSample {
+                std::move(value), idx, size, worker_rank, sequence_idx };
+        }
     };
 
     struct ReplyBlockSample {
