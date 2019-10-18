@@ -1128,7 +1128,7 @@ std::string PageMain() {
     for (size_t i = 0; i < c_NetManager.size() - 1; i++) {
         double td = (c_NetManager[i + 1].ts - c_NetManager[i].ts) / 1000000.0;
         net_tx_rx_bytes +=
-                (c_NetManager[i].tx_speed + c_NetManager[i].rx_speed) * td;
+            (c_NetManager[i].tx_speed + c_NetManager[i].rx_speed) * td;
     }
 
     /*uint64_t net_tx_bytes =
@@ -1213,11 +1213,11 @@ std::string PageMain() {
         << " cpu_user_sys=" << cpu_user_sys
         << " cpu_user=" << cpu_user
         << " net_tx_rx_bytes=" << net_tx_rx_bytes
-        //<< " net_tx_bytes=" << net_tx_bytes
-        //<< " net_rx_bytes=" << net_rx_bytes
+        // << " net_tx_bytes=" << net_tx_bytes
+        // << " net_rx_bytes=" << net_rx_bytes
         << " net_tx_rx_speed=" << net_tx_rx_speed
-        //<< " net_tx_speed=" << net_tx_speed
-        //<< " net_rx_speed=" << net_rx_speed
+        // << " net_tx_speed=" << net_tx_speed
+        // << " net_rx_speed=" << net_rx_speed
         << " diskstats_rd_wr_bytes=" << diskstats_rd_wr_bytes
         << "\n";
 
@@ -1381,10 +1381,10 @@ std::string ResultLines() {
     }
 
     for (const auto& v : MakeSeriesVector(
-            c_LinuxProcStats,
-            [](const CLinuxProcStats& c) {
-                return c.diskstats_rd_bytes;
-            }))
+             c_LinuxProcStats,
+             [](const CLinuxProcStats& c) {
+                 return c.diskstats_rd_bytes;
+             }))
     {
         oss << "RESULT"
             << "\ttitle=" << title
@@ -1393,10 +1393,10 @@ std::string ResultLines() {
     }
 
     for (const auto& v : MakeSeriesVector(
-            c_LinuxProcStats,
-            [](const CLinuxProcStats& c) {
-                return c.diskstats_wr_bytes;
-            }))
+             c_LinuxProcStats,
+             [](const CLinuxProcStats& c) {
+                 return c.diskstats_wr_bytes;
+             }))
     {
         oss << "RESULT"
             << "\ttitle=" << title

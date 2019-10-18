@@ -14,15 +14,15 @@
 
 #include <thrill/api/dia.hpp>
 #include <thrill/api/dop_node.hpp>
-#include <thrill/core/online_sampler.hpp>
 #include <thrill/core/multiway_merge.hpp>
+#include <thrill/core/online_sampler.hpp>
 #include <thrill/data/sampled_file.hpp>
 
 #include <tlx/vector_free.hpp>
 
 #include <algorithm>
-#include <vector>
 #include <utility>
+#include <vector>
 
 namespace thrill {
 namespace api {
@@ -40,9 +40,9 @@ namespace api {
  * \ingroup api_layer
  */
 template <
-        typename ValueType,
-        typename Comparator,
-        typename SortAlgorithm>
+    typename ValueType,
+    typename Comparator,
+    typename SortAlgorithm>
 class OnlineSampleSortNode final : public DOpNode<ValueType>
 {
     // TODO Unit test
@@ -58,7 +58,7 @@ class OnlineSampleSortNode final : public DOpNode<ValueType>
     using Timer = common::StatsTimerBaseStopped<stats_enabled>;
 
     using SampleIndexPair = std::pair<ValueType, size_t>;
-    using LocalRanks = std::vector<std::vector<size_t>>;
+    using LocalRanks = std::vector<std::vector<size_t> >;
 
     const size_t b_ = 5;
     const size_t k_ = 60000;
@@ -70,20 +70,19 @@ public:
      */
     template <typename ParentDIA>
     OnlineSampleSortNode(const ParentDIA& parent,
-            const Comparator& comparator,
-            const size_t r = 1,
-            const SortAlgorithm& sort_algorithm = SortAlgorithm())
+                         const Comparator& comparator,
+                         const size_t r = 1,
+                         const SortAlgorithm& sort_algorithm = SortAlgorithm())
         : Super(parent.ctx(), "Online Sample Sort", { parent.id() },
                 { parent.node() }),
           comparator_(comparator), sort_algorithm_(sort_algorithm),
           parent_stack_empty_(ParentDIA::stack_empty),
           sampler_(b_, k_, parent.ctx(), this->dia_id(), comparator,
-                   sort_algorithm, r)
-    {
+                   sort_algorithm, r) {
         // Hook PreOp(s).
         auto pre_op_fn = [this](const ValueType& input) {
-            PreOp(input);
-        };
+                             PreOp(input);
+                         };
 
         auto lop_chain = parent.stack().push(pre_op_fn).fold();
         parent.node()->AddChild(this, lop_chain);
@@ -121,8 +120,8 @@ public:
     bool OnPreOpFile(const data::File& file, size_t /* parent_index */) final {
         if (!parent_stack_empty_) {
             LOGC(common::g_debug_push_file)
-            << "OnlineSampleSort rejected File from parent "
-            << "due to non-empty function stack.";
+                << "OnlineSampleSort rejected File from parent "
+                << "due to non-empty function stack.";
             return false;
         }
 
@@ -145,25 +144,25 @@ public:
         timer_pre_op_.Stop();
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op local items", local_items_);
+                "OnlineSampleSort() pre op local items", local_items_);
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op timer",
-                    timer_pre_op_.SecondsDouble());
+                "OnlineSampleSort() pre op timer",
+                timer_pre_op_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op sample timer",
-                    timer_sample_.SecondsDouble());
+                "OnlineSampleSort() pre op sample timer",
+                timer_sample_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op partition timer",
-                    timer_partition_.SecondsDouble());
+                "OnlineSampleSort() pre op partition timer",
+                timer_partition_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op sort timer",
-                    timer_sort_.SecondsDouble());
+                "OnlineSampleSort() pre op sort timer",
+                timer_sort_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op communication timer",
-                    timer_pre_op_communication_.SecondsDouble());
+                "OnlineSampleSort() pre op communication timer",
+                timer_pre_op_communication_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() pre op file io timer",
-                    timer_pre_op_file_io_.SecondsDouble());
+                "OnlineSampleSort() pre op file io timer",
+                timer_pre_op_file_io_.SecondsDouble());
             sampler_.PrintStats();
         }
     }
@@ -182,13 +181,13 @@ public:
         auto splitter_count = final_splitters_.size();
         auto run_count = run_files_.size();
         auto max_run_count = context_.net.AllReduce(run_count,
-                [](const size_t& a, const size_t& b){
-                    return std::max(a, b);
-                });
+                                                    [](const size_t& a, const size_t& b) {
+                                                        return std::max(a, b);
+                                                    });
         LOG << "Add " << max_run_count - run_count << " dummy runs";
         while (run_files_.size() < max_run_count) {
             run_files_.push_back(context_.template GetSampledFilePtr
-                    <ValueType>(this));
+                                 <ValueType>(this));
         }
         run_count = max_run_count;
 
@@ -199,8 +198,8 @@ public:
         for (size_t s = 0; s < splitter_count; s++) {
             for (size_t r = 0; r < run_count; r++) {
                 local_ranks[s][r] = run_files_[r]->GetFastIndexOf(
-                        final_splitters_[s], run_files_[r]->num_items(),
-                        comparator_);
+                    final_splitters_[s], run_files_[r]->num_items(),
+                    comparator_);
             }
         }
         timer_global_splitter.Stop();
@@ -210,21 +209,21 @@ public:
         local_items_ = 0;
         for (size_t run_index = 0; run_index < run_count; run_index++) {
             auto data_stream = context_.template GetNewStream<data::CatStream>(
-                    this->dia_id());
+                this->dia_id());
 
             // Construct offsets vector.
             std::vector<size_t> run_offsets(splitter_count + 2);
             run_offsets[0] = 0;
             std::transform(local_ranks.begin(), local_ranks.end(),
-                    run_offsets.begin() + 1,
-                    [run_index](std::vector<size_t> element) {
-                return element[run_index];
-            });
+                           run_offsets.begin() + 1,
+                           [run_index](std::vector<size_t> element) {
+                               return element[run_index];
+                           });
             run_offsets[splitter_count + 1] = run_files_[run_index]->
-                    num_items();
+                                              num_items();
             LOG << "Offsets[" << run_index << "]: " << run_offsets;
             LOG << run_offsets[context_.my_rank() + 1] -
-                   run_offsets[context_.my_rank()] << " / "
+                run_offsets[context_.my_rank()] << " / "
                 << run_files_[run_index]->num_items()
                 << " elements will stay local.";
 
@@ -245,16 +244,16 @@ public:
 
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() main op local items", local_items_);
+                "OnlineSampleSort() main op local items", local_items_);
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() main op timer",
-                    timer_main_op.SecondsDouble());
+                "OnlineSampleSort() main op timer",
+                timer_main_op.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() main op splitter timer",
-                    timer_global_splitter.SecondsDouble());
+                "OnlineSampleSort() main op splitter timer",
+                timer_global_splitter.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampleSort() main op communication timer",
-                    timer_global_communication_.SecondsDouble());
+                "OnlineSampleSort() main op communication timer",
+                timer_global_communication_.SecondsDouble());
         }
     }
 
@@ -285,7 +284,7 @@ public:
         else {
             size_t merge_degree, prefetch;
             std::tie(merge_degree, prefetch) =
-                    context_.block_pool().MaxMergeDegreePrefetch(final_run_files_.size());
+                context_.block_pool().MaxMergeDegreePrefetch(final_run_files_.size());
 
             std::vector<data::File::Reader> file_readers;
             for (size_t i = 0; i < final_run_files_.size(); i++) {
@@ -297,8 +296,7 @@ public:
 
             LOG << "Building merge tree.";
             auto file_merge_tree = core::make_multiway_merge_tree<ValueType>(
-                    file_readers.begin(), file_readers.end(), comparator_);
-
+                file_readers.begin(), file_readers.end(), comparator_);
 
             LOG << "Merging " << final_run_files_.size() << " files with prefetch " << prefetch << ".";
             timer_merge_.Start();
@@ -325,23 +323,23 @@ public:
         if (stats_enabled) {
             size_t p = context_.num_workers();
             size_t total_time = context_.net.AllReduce(
-                    timer_total_.Milliseconds()) / p;
-            double sort = (double) context_.net.AllReduce(
-                    timer_sort_.Milliseconds()) / p;
-            double sample = (double) context_.net.AllReduce(
-                    timer_sample_.Milliseconds()) / p;
-            double pre_op_communication = (double) context_.net.AllReduce(
-                    timer_pre_op_communication_.Milliseconds()) / p;
-            double merge = (double) context_.net.AllReduce(
-                    timer_merge_.Milliseconds()) / p;
-            double partition = (double) context_.net.AllReduce(
-                    timer_partition_.Milliseconds()) / p;
-            double run_formation = (double) context_.net.AllReduce(
-                    timer_pre_op_.Milliseconds()) / p;
-            double global_communication = (double) context_.net.AllReduce(
-                    timer_global_communication_.Milliseconds()) / p;
-            double final_merge = (double) context_.net.AllReduce(
-                    timer_push_data.Milliseconds()) / p;
+                timer_total_.Milliseconds()) / p;
+            double sort = (double)context_.net.AllReduce(
+                timer_sort_.Milliseconds()) / p;
+            double sample = (double)context_.net.AllReduce(
+                timer_sample_.Milliseconds()) / p;
+            double pre_op_communication = (double)context_.net.AllReduce(
+                timer_pre_op_communication_.Milliseconds()) / p;
+            double merge = (double)context_.net.AllReduce(
+                timer_merge_.Milliseconds()) / p;
+            double partition = (double)context_.net.AllReduce(
+                timer_partition_.Milliseconds()) / p;
+            double run_formation = (double)context_.net.AllReduce(
+                timer_pre_op_.Milliseconds()) / p;
+            double global_communication = (double)context_.net.AllReduce(
+                timer_global_communication_.Milliseconds()) / p;
+            double final_merge = (double)context_.net.AllReduce(
+                timer_push_data.Milliseconds()) / p;
             double other = total_time - sort - pre_op_communication -
                            global_communication - merge - sample - partition;
             if (context_.my_rank() == 0) {
@@ -353,7 +351,7 @@ public:
                      << " other=" << other << " run_formation=" << run_formation
                      << " global_communication=" << global_communication
                      << " final_merge=" << final_merge
-                     << " workers=" << p; //<< " result_size=" << result_size;
+                     << " workers=" << p; // << " result_size=" << result_size;
             }
         }
     }
@@ -385,7 +383,7 @@ private:
     //! capacity is reached
     std::vector<ValueType> current_run_;
     //! Runs in the first phase of the algorithm
-    std::vector<data::SampledFilePtr<ValueType>> run_files_;
+    std::vector<data::SampledFilePtr<ValueType> > run_files_;
     //! Final splitters used for redistribution step
     std::vector<ValueType> final_splitters_;
     //! Number of items on this worker
@@ -406,7 +404,7 @@ private:
 
     //! time spent in PreOp (including preceding node's computation)
     Timer timer_pre_op_;
-    
+
     //! time spent in online sampling
     Timer timer_sample_;
 
@@ -444,9 +442,9 @@ private:
         TreeBuilder(ValueType* tree,
                     const SampleIndexPair* splitters,
                     size_t splitters_size)
-                : tree_(tree),
-                  splitters_(splitters),
-                  splitters_size_(splitters_size) {
+            : tree_(tree),
+              splitters_(splitters),
+              splitters_size_(splitters_size) {
             if (splitters_size != 0)
                 recurse(splitters, splitters + splitters_size, 1);
         }
@@ -467,22 +465,22 @@ private:
         }
     };
 
-    bool EqualSampleGreaterIndex(const SampleIndexPair& a, 
-            const SampleIndexPair& b) {
+    bool EqualSampleGreaterIndex(const SampleIndexPair& a,
+                                 const SampleIndexPair& b) {
         return !comparator_(a.first, b.first) && a.second >= b.second;
     }
 
     // TODO Refactor to vectors
     void TransmitItems(
-            // Tree of splitters, sizeof |splitter|
-            const ValueType* const tree,
-            // Number of buckets: k = 2^{log_k}
-            size_t k,
-            size_t log_k,
-            // Number of actual workers to send to
-            size_t actual_k,
-            const SampleIndexPair* const sorted_splitters,
-            data::MixStreamPtr& data_stream) {
+        // Tree of splitters, sizeof |splitter|
+        const ValueType* const tree,
+        // Number of buckets: k = 2^{log_k}
+        size_t k,
+        size_t log_k,
+        // Number of actual workers to send to
+        size_t actual_k,
+        const SampleIndexPair* const sorted_splitters,
+        data::MixStreamPtr& data_stream) {
 
         auto data_writers = data_stream->GetWriters();
 
@@ -524,12 +522,12 @@ private:
             size_t b1 = j1 - k;
 
             while (b0 && EqualSampleGreaterIndex(
-                    sorted_splitters[b0 - 1], SampleIndexPair(el0, i + 0))) {
+                       sorted_splitters[b0 - 1], SampleIndexPair(el0, i + 0))) {
                 b0--;
             }
 
             while (b1 && EqualSampleGreaterIndex(
-                    sorted_splitters[b1 - 1], SampleIndexPair(el1, i + 1))) {
+                       sorted_splitters[b1 - 1], SampleIndexPair(el1, i + 1))) {
                 b1--;
             }
 
@@ -559,7 +557,7 @@ private:
             size_t b0 = j0 - k;
 
             while (b0 && EqualSampleGreaterIndex(
-                    sorted_splitters[b0 - 1], SampleIndexPair(el0, i))) {
+                       sorted_splitters[b0 - 1], SampleIndexPair(el0, i))) {
                 b0--;
             }
 
@@ -584,7 +582,7 @@ private:
         // Write elements to file.
         LOG << "Write sorted run to file.";
         run_files_.push_back(context_.template GetSampledFilePtr<ValueType>(
-                this));
+                                 this));
         timer_pre_op_file_io_.Start();
         auto current_run_file_writer = run_files_.back()->GetWriter();
         for (auto element : current_run_) {
@@ -620,7 +618,7 @@ private:
         splitters_with_indices.reserve(tree_size);
         for (size_t i = 0; i < p_ - 1; i++) {
             splitters_with_indices.push_back(SampleIndexPair(splitters[i],
-                    (i + 1) * current_run_.size() / p_));
+                                                             (i + 1) * current_run_.size() / p_));
         }
 
         // Add sentinel splitters.
@@ -629,7 +627,7 @@ private:
         }
 
         // Build tree.
-        LOG << "Build tree of size " << tree_size << " with height " 
+        LOG << "Build tree of size " << tree_size << " with height "
             << log_tree_size << ".";
         TreeBuilder(tree.data(),
                     splitters_with_indices.data(),
@@ -638,9 +636,9 @@ private:
         // Partition.
         LOG << "Partition and communicate " << current_run_.size() << " elements.";
         auto data_stream = context_.template GetNewStream<data::MixStream>(
-                this->dia_id());
+            this->dia_id());
         TransmitItems(tree.data(), tree_size, log_tree_size, p_,
-                splitters_with_indices.data(), data_stream);
+                      splitters_with_indices.data(), data_stream);
         current_run_.clear();
 
         // Receive elements and sort.
@@ -682,22 +680,22 @@ public:
 template <typename ValueType, typename Stack>
 template <typename CompareFunction>
 auto DIA<ValueType, Stack>::OnlineSampleSort(const size_t r,
-        const CompareFunction& compare_function) const {
+                                             const CompareFunction& compare_function) const {
     assert(IsValid());
 
     using OnlineSampleSortNode = api::OnlineSampleSortNode<
-            ValueType, CompareFunction, DefaultSortAlgorithm>;
+        ValueType, CompareFunction, DefaultSortAlgorithm>;
 
     static_assert(
         std::is_convertible<
             ValueType,
-            typename FunctionTraits<CompareFunction>::template arg<0>>::value,
+            typename FunctionTraits<CompareFunction>::template arg<0> >::value,
         "CompareFunction has the wrong input type");
 
     static_assert(
         std::is_convertible<
             ValueType,
-            typename FunctionTraits<CompareFunction>::template arg<1>>::value,
+            typename FunctionTraits<CompareFunction>::template arg<1> >::value,
         "CompareFunction has the wrong input type");
 
     static_assert(
@@ -705,8 +703,8 @@ auto DIA<ValueType, Stack>::OnlineSampleSort(const size_t r,
             typename FunctionTraits<CompareFunction>::result_type, bool>::value,
         "CompareFunction has the wrong output type (should be bool)");
 
-    auto node = tlx::make_counting<OnlineSampleSortNode>(*this, 
-            compare_function, r);
+    auto node = tlx::make_counting<OnlineSampleSortNode>(*this,
+                                                         compare_function, r);
 
     return DIA<ValueType>(node);
 }

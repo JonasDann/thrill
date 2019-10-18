@@ -21,9 +21,9 @@
 #include <thrill/data/block_pool.hpp>
 #include <thrill/data/cat_stream.hpp>
 #include <thrill/data/file.hpp>
+#include <thrill/data/fwd.hpp>
 #include <thrill/data/mix_stream.hpp>
 #include <thrill/data/multiplexer.hpp>
-#include <thrill/data/fwd.hpp>
 #include <thrill/net/flow_control_channel.hpp>
 #include <thrill/net/flow_control_manager.hpp>
 #include <thrill/net/manager.hpp>

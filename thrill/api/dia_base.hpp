@@ -335,8 +335,8 @@ using DIABasePtr = tlx::CountingPtr<DIABase>;
 
 template <typename ItemType>
 data::SampledFilePtr<ItemType> Context::GetSampledFilePtr(size_t dia_id) {
-    return tlx::make_counting<data::SampledFile<ItemType>>(
-            block_pool_, local_worker_id_, dia_id);
+    return tlx::make_counting<data::SampledFile<ItemType> >(
+        block_pool_, local_worker_id_, dia_id);
 }
 
 template <typename ItemType>

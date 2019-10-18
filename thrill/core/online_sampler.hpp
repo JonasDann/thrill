@@ -22,7 +22,8 @@ namespace thrill {
 namespace core {
 
 template <typename ValueType>
-class Buffer {
+class Buffer
+{
 public:
     std::vector<ValueType> elements_;
     size_t weight_;
@@ -40,9 +41,9 @@ public:
     Buffer& operator = (Buffer&& b) noexcept = default;
 
     Buffer(std::vector<ValueType>&& elements, size_t weight, bool sorted,
-            size_t k)
-            : elements_(elements), weight_(weight), sorted_(sorted),
-              k_(k) {}
+           size_t k)
+        : elements_(elements), weight_(weight), sorted_(sorted),
+          k_(k) { }
 
     bool Put(ValueType value) {
         assert(HasCapacity());
@@ -71,12 +72,13 @@ public:
  * \tparam Stable Whether or not to use stable sorting mechanisms
  */
 template <
-        typename ValueType,
-        typename Comparator,
-        typename SortAlgorithm,
-        bool NonUniformSampling = true,
-        bool Stable = false>
-class OnlineSampler {
+    typename ValueType,
+    typename Comparator,
+    typename SortAlgorithm,
+    bool NonUniformSampling = true,
+    bool Stable = false>
+class OnlineSampler
+{
     using LoserTree = tlx::LoserTree<Stable, ValueType, Comparator>;
 
     static constexpr bool debug = false;
@@ -99,12 +101,12 @@ public:
      * \param k Number of elements in each buffer
      */
     OnlineSampler(size_t b, size_t k, Context& context, size_t dia_id,
-            const Comparator& comparator, const SortAlgorithm& sort_algorithm,
-            size_t r = 1)
-            : b_(b), k_(k), r_(r), context_(context), dia_id_(dia_id),
-              comparator_(comparator), sort_algorithm_(sort_algorithm),
-              partial_buffer_(k), pool_buffer_(k), empty_buffer_count_(b),
-              new_level_(0) {
+                  const Comparator& comparator, const SortAlgorithm& sort_algorithm,
+                  size_t r = 1)
+        : b_(b), k_(k), r_(r), context_(context), dia_id_(dia_id),
+          comparator_(comparator), sort_algorithm_(sort_algorithm),
+          partial_buffer_(k), pool_buffer_(k), empty_buffer_count_(b),
+          new_level_(0) {
         rng_ = std::mt19937(rd_());
         buffers_.reserve(b_);
         for (size_t i = 0; i < b_; i++) {
@@ -129,12 +131,13 @@ public:
         bool has_capacity = true;
         if (r_ <= 1) {
             has_capacity = partial_buffer_.Put(value);
-        } else {
+        }
+        else {
             sample_block_.push_back(value);
             if (sample_block_.size() >= r_) {
                 std::uniform_int_distribution<size_t> uni(0, r_);
                 has_capacity = partial_buffer_.
-                        Put(sample_block_[uni(rng_)]);
+                               Put(sample_block_[uni(rng_)]);
                 sample_block_.clear();
             }
         }
@@ -162,7 +165,7 @@ public:
         }
         while (level_end - level_begin < 2) {
             level_begin = b_ - empty_buffer_count_ -
-                               level_counters_[current_level];
+                          level_counters_[current_level];
             empty_buffer_count_ += level_counters_[current_level];
             level_counters_[current_level] = 0;
             current_level++;
@@ -182,9 +185,10 @@ public:
             if (NonUniformSampling) {
                 r_ *= 2;
                 new_level_++;
-                ResampleBuffer(partial_buffer_, 1/2);
+                ResampleBuffer(partial_buffer_, 1 / 2);
             }
-        } else {
+        }
+        else {
             level_counters_[current_level]++;
         }
         assert(current_level < level_counters_.size());
@@ -204,7 +208,7 @@ public:
      * \param out_splitters Vector that will contain the resulting splitters
      */
     void GetSplitters(const std::vector<double>& quantiles,
-            std::vector<ValueType> &out_splitters) {
+                      std::vector<ValueType>& out_splitters) {
         timer_total_.Start();
         LOG << "GetSplitters()";
         LOG << "Collapse full buffers, but do not change state.";
@@ -216,7 +220,7 @@ public:
         LOG << "Send full and partial buffer to PE 0.";
         timer_communication_.Start();
         auto stream = context_.template GetNewStream<data::CatStream>(
-                dia_id_);
+            dia_id_);
         auto writers = stream->GetWriters();
         auto readers = stream->GetReaders();
 
@@ -228,15 +232,15 @@ public:
         if (context_.my_rank() == 0) {
             timer_communication_.Start();
             LOG << "Receive " << context_.num_workers() << " buffers.";
-            std::vector<Buffer<ValueType>> full_buffers;
-            std::vector<Buffer<ValueType>> partial_buffers;
+            std::vector<Buffer<ValueType> > full_buffers;
+            std::vector<Buffer<ValueType> > partial_buffers;
             for (size_t p = 0; p < context_.num_workers(); p++) {
                 full_buffers.push_back(std::move(
-                        readers[p].template Next<Buffer<ValueType>>()));
+                                           readers[p].template Next<Buffer<ValueType> >()));
                 partial_buffers.push_back(std::move(
-                        readers[p].template Next<Buffer<ValueType>>()));
+                                              readers[p].template Next<Buffer<ValueType> >()));
                 sort_algorithm_(partial_buffers.back().elements_.begin(),
-                        partial_buffers.back().elements_.end(), comparator_);
+                                partial_buffers.back().elements_.end(), comparator_);
                 partial_buffers.back().sorted_ = true;
             }
             timer_communication_.Stop();
@@ -246,18 +250,19 @@ public:
                 if (partial_buffers[p].elements_.size() > 0) {
                     if (partial_buffer.weight_ < partial_buffers[p].weight_) {
                         ResampleBuffer(partial_buffer,
-                                partial_buffer.weight_ /
-                                partial_buffers[p].weight_);
-                    } else {
+                                       partial_buffer.weight_ /
+                                       partial_buffers[p].weight_);
+                    }
+                    else {
                         ResampleBuffer(partial_buffers[p],
-                                partial_buffers[p].weight_ /
-                                partial_buffer.weight_);
+                                       partial_buffers[p].weight_ /
+                                       partial_buffer.weight_);
                     }
                     bool has_capacity;
                     for (size_t i = 0; i < partial_buffers[p].elements_.size();
-                            i++) {
+                         i++) {
                         has_capacity = partial_buffer.Put(
-                                partial_buffers[p].elements_[i]);
+                            partial_buffers[p].elements_[i]);
                         partial_buffer.sorted_ = false;
                         if (!has_capacity) {
                             sort_algorithm_(partial_buffer.elements_.begin(),
@@ -265,11 +270,11 @@ public:
                                             comparator_);
                             partial_buffer.sorted_ = true;
                             full_buffers.push_back(
-                                    std::move(partial_buffer));
+                                std::move(partial_buffer));
                             partial_buffer = std::move(partial_buffers[p]);
                             partial_buffer.elements_.erase(
-                                    partial_buffer.elements_.begin(),
-                                    partial_buffer.elements_.begin() + i);
+                                partial_buffer.elements_.begin(),
+                                partial_buffer.elements_.begin() + i);
                         }
                     }
                 }
@@ -286,7 +291,7 @@ public:
             size_t sequence_length = k_ * target_buffer.weight_ +
                                      partial_buffer.elements_.size() *
                                      partial_buffer.weight_;
-            std::vector<Buffer<ValueType>> remaining_buffers;
+            std::vector<Buffer<ValueType> > remaining_buffers;
             remaining_buffers.push_back(std::move(target_buffer));
             if (partial_buffer.elements_.size() > 0) {
                 remaining_buffers.push_back(std::move(partial_buffer));
@@ -308,22 +313,23 @@ public:
 
                     if (remaining_buffers.size() < 2) {
                         size_t steps = std::max((target_rank - total_position) /
-                                       remaining_buffers[0].weight_, 1.0);
+                                                remaining_buffers[0].weight_, 1.0);
                         total_position += remaining_buffers[0].weight_ * steps;
                         positions[0] += steps;
                         splitter = remaining_buffers[0].
-                                elements_[positions[0] - 1];
-                    } else {
+                                   elements_[positions[0] - 1];
+                    }
+                    else {
                         splitter = remaining_buffers[minimum_index].
-                                elements_[positions[minimum_index]];
+                                   elements_[positions[minimum_index]];
                         total_position += remaining_buffers[minimum_index].
-                                weight_;
+                                          weight_;
                         positions[minimum_index]++;
                         if (positions[minimum_index] >=
-                                remaining_buffers[minimum_index].elements_.
-                                size()) {
+                            remaining_buffers[minimum_index].elements_.
+                            size()) {
                             remaining_buffers.erase(
-                                    remaining_buffers.begin() + minimum_index);
+                                remaining_buffers.begin() + minimum_index);
                         }
                     }
                 }
@@ -339,7 +345,8 @@ public:
                 writers[p].Close();
             }
             timer_communication_.Stop();
-        } else {
+        }
+        else {
             LOG << "Close unused writers.";
             for (size_t p = 1; p < context_.num_workers(); p++) {
                 writers[p].Close();
@@ -347,7 +354,7 @@ public:
 
             LOG << "Receive resulting quantiles.";
             timer_communication_.Start();
-            while(readers[0].HasNext()) {
+            while (readers[0].HasNext()) {
                 out_splitters.push_back(readers[0].template Next<ValueType>());
             }
             timer_communication_.Stop();
@@ -360,17 +367,17 @@ public:
     void PrintStats() {
         if (stats_enabled) {
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampler total timer",
-                    timer_total_.SecondsDouble());
+                "OnlineSampler total timer",
+                timer_total_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampler sort timer",
-                    timer_sort_.SecondsDouble());
+                "OnlineSampler sort timer",
+                timer_sort_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampler communication timer",
-                    timer_communication_.SecondsDouble());
+                "OnlineSampler communication timer",
+                timer_communication_.SecondsDouble());
             context_.PrintCollectiveMeanStdev(
-                    "OnlineSampler merge timer",
-                    timer_merge_.SecondsDouble());
+                "OnlineSampler merge timer",
+                timer_merge_.SecondsDouble());
         }
     }
 
@@ -391,7 +398,7 @@ private:
     std::mt19937 rng_;
 
     std::vector<ValueType> sample_block_;
-    std::vector<Buffer<ValueType>> buffers_;
+    std::vector<Buffer<ValueType> > buffers_;
     Buffer<ValueType> partial_buffer_;
     Buffer<ValueType> pool_buffer_;
     std::vector<size_t> level_counters_;
@@ -407,7 +414,7 @@ private:
         LOG << "New()";
         assert(!partial_buffer_.HasCapacity());
         auto next_index = std::accumulate(level_counters_.begin(),
-                                          level_counters_.end(), (size_t) 0);
+                                          level_counters_.end(), (size_t)0);
         std::swap(buffers_[next_index], partial_buffer_);
         level_counters_[new_level_]++;
         partial_buffer_.weight_ = 1;
@@ -420,15 +427,16 @@ private:
     size_t GetTargetRank(size_t j, size_t weight) {
         if (weight % 2 == 0) { // even
             return j * weight + weight / 2 + even_bias_;
-        } else { // uneven
+        }
+        else {                 // uneven
             return j * weight + (weight + 1) / 2;
         }
     }
 
     void Collapse(
-            typename std::vector<Buffer<ValueType>>::iterator buffers_begin,
-            typename std::vector<Buffer<ValueType>>::iterator buffers_end,
-            Buffer<ValueType>& target_buffer) {
+        typename std::vector<Buffer<ValueType> >::iterator buffers_begin,
+        typename std::vector<Buffer<ValueType> >::iterator buffers_end,
+        Buffer<ValueType>& target_buffer) {
         LOG << "Sort buffers and construct loser tree.";
         auto buffers_size = buffers_end - buffers_begin;
         LoserTree loser_tree(buffers_size, comparator_);
@@ -445,7 +453,7 @@ private:
             weight_sum += (*it).weight_;
             loser_tree.insert_start(&(*it).elements_[0], i, false);
             LOG << "[" << i << "] " << (*it).elements_.size() << "*"
-                 << (*it).weight_;
+                << (*it).weight_;
             i++;
         }
         loser_tree.init();
@@ -461,20 +469,20 @@ private:
         for (size_t j = 0; j < k_; j++) {
             size_t target_rank = GetTargetRank(j, weight_sum);
             ValueType sample =
-                    (*buffers_begin).elements_[0]; // Init removes warning
+                (*buffers_begin).elements_[0];     // Init removes warning
             assert(total_index < target_rank);
             while (total_index < target_rank) {
                 auto minimum_index = loser_tree.min_source();
                 sample = (*(buffers_begin + minimum_index)).
-                        elements_[positions[minimum_index]];
+                         elements_[positions[minimum_index]];
                 total_index += (*(buffers_begin + minimum_index)).weight_;
                 positions[minimum_index]++;
                 auto has_next = positions[minimum_index] <
-                        (*(buffers_begin + minimum_index)).elements_.size();
+                                (*(buffers_begin + minimum_index)).elements_.size();
                 loser_tree.delete_min_insert(
-                        has_next ? &(*(buffers_begin + minimum_index)).
-                                elements_[positions[minimum_index]] : nullptr,
-                        !has_next);
+                    has_next ? &(*(buffers_begin + minimum_index)).
+                    elements_[positions[minimum_index]] : nullptr,
+                    !has_next);
             }
             target_buffer.Put(sample);
         }
@@ -483,7 +491,8 @@ private:
         if (weight_sum % 2 == 0) {
             if (even_bias_) {
                 even_bias_ = 0;
-            } else {
+            }
+            else {
                 even_bias_ = 1;
             }
         }
@@ -499,7 +508,7 @@ private:
         double step_size = 1 / factor;
         for (size_t i = 0; i < new_size; i++) {
             auto index =
-                    static_cast<size_t> (i * step_size + (step_size / 2));
+                static_cast<size_t>(i * step_size + (step_size / 2));
             new_elements.push_back(buffer.elements_[index]);
         }
         buffer.elements_ = std::move(new_elements);
@@ -511,9 +520,9 @@ private:
 namespace data {
 
 template <typename Archive, typename T>
-struct Serialization<Archive, core::Buffer<T>> {
+struct Serialization<Archive, core::Buffer<T> > {
     static void Serialize(const core::Buffer<T>& b, Archive& ar) {
-        Serialization<Archive, std::vector<T>>::Serialize(b.elements_, ar);
+        Serialization<Archive, std::vector<T> >::Serialize(b.elements_, ar);
         Serialization<Archive, size_t>::Serialize(b.weight_, ar);
         Serialization<Archive, bool>::Serialize(b.sorted_, ar);
         Serialization<Archive, size_t>::Serialize(b.k_, ar);
@@ -521,7 +530,7 @@ struct Serialization<Archive, core::Buffer<T>> {
 
     static core::Buffer<T> Deserialize(Archive& ar) {
         std::vector<T> elements =
-                Serialization<Archive, std::vector<T>>::Deserialize(ar);
+            Serialization<Archive, std::vector<T> >::Deserialize(ar);
         size_t weight = Serialization<Archive, size_t>::Deserialize(ar);
         bool sorted = Serialization<Archive, bool>::Deserialize(ar);
         size_t k = Serialization<Archive, size_t>::Deserialize(ar);

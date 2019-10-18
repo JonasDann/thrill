@@ -182,7 +182,8 @@ void CatStreamData::GetFile(FilePtr& out_file) {
         auto block = queues_[worker].Pop();
         if (block.IsValid()) {
             out_file->AppendBlock(block);
-        } else {
+        }
+        else {
             worker++;
         }
     }

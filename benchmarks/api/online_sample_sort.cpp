@@ -8,11 +8,11 @@
  * All rights reserved. Published under the BSD-2 license in the LICENSE file.
  ******************************************************************************/
 
+#include <thrill/api/all_gather.hpp>
 #include <thrill/api/dia.hpp>
 #include <thrill/api/generate.hpp>
-#include <thrill/api/size.hpp>
-#include <thrill/api/all_gather.hpp>
 #include <thrill/api/online_sample_sort.hpp>
+#include <thrill/api/size.hpp>
 #include <thrill/common/logger.hpp>
 #include <thrill/common/stats_timer.hpp>
 #include <tlx/cmdline_parser.hpp>
@@ -32,7 +32,7 @@ struct Record {
         return key < b.key;
     }
 
-    friend std ::ostream& operator << (std::ostream& os, const Record& r) {
+    friend std::ostream& operator << (std::ostream& os, const Record& r) {
         return os << r.key << r.value;
     }
 } TLX_ATTRIBUTE_PACKED;
@@ -42,19 +42,23 @@ constexpr bool self_verify = false;
 using RandomGenerator = std::mt19937_64;
 
 uint64_t generator(size_t i, size_t n, const std::string& generator_type,
-               RandomGenerator& rng) {
+                   RandomGenerator& rng) {
     std::uniform_int_distribution<int> uni;
     std::exponential_distribution<double> expo(2.0);
     if (generator_type == "uni") {
         return uni(rng);
-    } else if (generator_type == "sort") {
+    }
+    else if (generator_type == "sort") {
         return i;
-    } else if (generator_type == "ones") {
+    }
+    else if (generator_type == "ones") {
         return 1;
-    } else if (generator_type == "window") {
+    }
+    else if (generator_type == "window") {
         size_t window_size = n * 10;
         return i + (uni(rng) % window_size);
-    } else if (generator_type == "dup") {
+    }
+    else if (generator_type == "dup") {
         return static_cast<uint64_t>(std::fmod((pow(i, 2) + static_cast<double>(n) / 2), n));
     }
     return -1;
@@ -78,7 +82,7 @@ int main(int argc, char* argv[]) {
 
     size_t random = 1;
     clp.add_size_t('r', "random", random,
-                        "Randomization factor (default: 1).");
+                   "Randomization factor (default: 1).");
 
     if (!clp.process(argc, argv)) {
         return -1;
@@ -87,38 +91,39 @@ int main(int argc, char* argv[]) {
     clp.print_result();
 
     api::Run(
-            [&iterations, &size, &generator_type, &random](api::Context& ctx) {
-                for (int i = 0; i < iterations; i++) {
-                    std::random_device rd;
-                    RandomGenerator rng(rd());
+        [&iterations, &size, &generator_type, &random](api::Context& ctx) {
+            for (int i = 0; i < iterations; i++) {
+                std::random_device rd;
+                RandomGenerator rng(rd());
 
-                    size_t element_count = size / sizeof(Record);
-                    common::StatsTimerStart timer;
-                    auto sorted = api::Generate(
-                            ctx, element_count,
-                            [&ctx, &element_count, &generator_type, &rng](size_t i) -> Record {
-                                auto real_i = i - element_count * ctx.my_rank() / ctx.num_workers();
-                                auto global_idx = real_i * ctx.num_workers() + ctx.my_rank();
-                                uint64_t key = generator(global_idx, element_count, generator_type, rng);
-                                Record r{key, key};
-                                return r;
-                            })
-                            .OnlineSampleSort(random);
-                    if (self_verify) {
-                        auto result = sorted.AllGather();
-                        die_unless(result.size() == element_count);
-                        for (size_t j = 1; j < result.size(); j++) {
-                            die_unless(result[i - 1] < result[i]);
-                        }
-                    } else {
-                        die_unless(sorted.Size() == element_count);
-                    }
-                    timer.Stop();
-                    if (!ctx.my_rank()) {
-                        LOG1 << "ITERATION " << i << " RESULT" << " time=" << timer;
+                size_t element_count = size / sizeof(Record);
+                common::StatsTimerStart timer;
+                auto sorted = api::Generate(
+                    ctx, element_count,
+                    [&ctx, &element_count, &generator_type, &rng](size_t i) -> Record {
+                        auto real_i = i - element_count * ctx.my_rank() / ctx.num_workers();
+                        auto global_idx = real_i * ctx.num_workers() + ctx.my_rank();
+                        uint64_t key = generator(global_idx, element_count, generator_type, rng);
+                        Record r{ key, key };
+                        return r;
+                    })
+                              .OnlineSampleSort(random);
+                if (self_verify) {
+                    auto result = sorted.AllGather();
+                    die_unless(result.size() == element_count);
+                    for (size_t j = 1; j < result.size(); j++) {
+                        die_unless(result[i - 1] < result[i]);
                     }
                 }
-            });
+                else {
+                    die_unless(sorted.Size() == element_count);
+                }
+                timer.Stop();
+                if (!ctx.my_rank()) {
+                    LOG1 << "ITERATION " << i << " RESULT" << " time=" << timer;
+                }
+            }
+        });
 }
 
 /******************************************************************************/

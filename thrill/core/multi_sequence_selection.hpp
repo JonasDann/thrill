@@ -12,8 +12,8 @@
  ******************************************************************************/
 
 #pragma once
-#ifndef THRILL_API_MULTI_SEQUENCE_SELECTION_HEADER
-#define THRILL_API_MULTI_SEQUENCE_SELECTION_HEADER
+#ifndef THRILL_CORE_MULTI_SEQUENCE_SELECTION_HEADER
+#define THRILL_CORE_MULTI_SEQUENCE_SELECTION_HEADER
 
 #include <thrill/api/context.hpp>
 #include <thrill/common/logger.hpp>
@@ -30,27 +30,25 @@ template <typename ValueType_>
 class MultisequenceSelectorFileSequenceAdapter
 {
 public:
-    typedef ValueType_ ValueType;
+    using ValueType = ValueType_;
 
     MultisequenceSelectorFileSequenceAdapter() = default;
 
     explicit MultisequenceSelectorFileSequenceAdapter(data::FilePtr& file)
         : file_(file)
-    {}
+    { }
 
-    size_t size()
-    {
+    size_t size() {
         return file_->num_items();
     }
 
-    ValueType operator [](size_t index) {
+    ValueType operator [] (size_t index) {
         return file_->template GetItemAt<ValueType>(index);
     }
 
-    template<typename Comparator>
+    template <typename Comparator>
     size_t GetIndexOf(const ValueType& item, size_t tie,
-                      size_t left, size_t right, const Comparator& comparator)
-    {
+                      size_t left, size_t right, const Comparator& comparator) {
         return file_->GetIndexOf(item, tie, left, right, comparator);
     }
 
@@ -62,29 +60,28 @@ template <typename ValueType_>
 class MultiSequenceSelectorSampledFileSequenceAdapter
 {
 public:
-    typedef ValueType_ ValueType;
+    using ValueType = ValueType_;
 
     MultiSequenceSelectorSampledFileSequenceAdapter() = default;
 
     explicit MultiSequenceSelectorSampledFileSequenceAdapter(
-            data::SampledFilePtr<ValueType>& file)
+        data::SampledFilePtr<ValueType>& file)
         : file_(file)
-    {}
+    { }
 
-    size_t size()
-    {
+    size_t size() {
         return file_->num_items();
     }
 
-    ValueType operator [](size_t index) {
+    ValueType operator [] (size_t index) {
         return file_->template GetItemAt<ValueType>(index);
     }
 
-    template<typename Comparator>
+    template <typename Comparator>
     size_t GetIndexOf(const ValueType& item, size_t tie,
-                      size_t left, size_t right, const Comparator& comparator)
-    {
-        (void) left; (void) right;
+                      size_t left, size_t right, const Comparator& comparator) {
+        (void)left;
+        (void)right;
         return file_->GetFastIndexOf(item, tie, comparator);
     }
 
@@ -112,19 +109,18 @@ template <typename ValueType_>
 class MultiSequenceSelectorVectorSequenceAdapter : public std::vector<ValueType_>
 {
 public:
-    typedef ValueType_ ValueType;
+    using ValueType = ValueType_;
 
-    template<typename Comparator>
+    template <typename Comparator>
     size_t GetIndexOf(const ValueType& item, size_t tie, size_t left,
-            size_t right, const Comparator& less)
-    {
+                      size_t right, const Comparator& less) {
         static constexpr bool debug = false;
 
         static_assert(
-                std::is_convertible<
-                        bool, typename common::FunctionTraits<Comparator>::result_type
+            std::is_convertible<
+                bool, typename common::FunctionTraits<Comparator>::result_type
                 >::value,
-                "Comparator must return boolean.");
+            "Comparator must return boolean.");
 
         LOG << "MultiSequenceSelectorVectorSequenceAdapter::GetIndexOf()"
             << " looking for item " << tlx::wrap_unp(item) << " tie " << tie
@@ -139,13 +135,14 @@ public:
         while (left < right) {
             size_t mid = (right + left) >> static_cast<size_t>(1);
             LOG << "left: " << left << "right: " << right << "mid: " << mid;
-            ValueType currentItem = std::vector<ValueType>::operator [](mid);
+            ValueType currentItem = std::vector<ValueType>::operator [] (mid);
             LOG << "Item at mid: " << tlx::wrap_unp(currentItem);
             if (less(item, currentItem) ||
                 (!less(item, currentItem) && !less(currentItem, item) &&
-                  tie <= mid)) {
+                 tie <= mid)) {
                 right = mid;
-            } else {
+            }
+            else {
                 left = mid + 1;
             }
         }
@@ -170,21 +167,20 @@ class MultiSequenceSelector
 public:
     MultiSequenceSelector(Context& context, const Comparator& comparator)
         : context_(context), comparator_(comparator)
-    {}
+    { }
 
     virtual void GetEquallyDistantSplitterRanks(SequenceAdapters& sequences,
-                          std::vector<std::vector<size_t>>& out_local_ranks,
-                          size_t splitter_count)
-    {
+                                                std::vector<std::vector<size_t> >& out_local_ranks,
+                                                size_t splitter_count) {
         auto seq_count = sequences.size();
 
         std::vector<size_t> target_ranks(splitter_count);
         GetTargetRanks(sequences, splitter_count, target_ranks);
 
         // Search range bounds.
-        std::vector<std::vector<size_t>>
-                left(splitter_count, std::vector<size_t>(seq_count)),
-                width(splitter_count, std::vector<size_t>(seq_count));
+        std::vector<std::vector<size_t> >
+        left(splitter_count, std::vector<size_t>(seq_count)),
+        width(splitter_count, std::vector<size_t>(seq_count));
 
         // Initialize all lefts with 0 and all widths with size of their
         // respective file.
@@ -263,7 +259,7 @@ protected:
         size_t iterations_ = 0;
 
         void PrintToSQLPlotTool(
-                const std::string& label, size_t p, size_t value) {
+            const std::string& label, size_t p, size_t value) {
 
             LOG1 << "RESULT " << "operation=" << label << " time=" << value
                  << " workers=" << p;
@@ -273,15 +269,15 @@ protected:
             if (stats_enabled) {
                 size_t p = ctx.num_workers();
                 size_t balance =
-                        ctx.net.AllReduce(balancing_timer_.Milliseconds()) / p;
+                    ctx.net.AllReduce(balancing_timer_.Milliseconds()) / p;
                 size_t pivot_selection =
-                        ctx.net.AllReduce(pivot_selection_timer_.Milliseconds()) / p;
+                    ctx.net.AllReduce(pivot_selection_timer_.Milliseconds()) / p;
                 size_t search_step =
-                        ctx.net.AllReduce(search_step_timer_.Milliseconds()) / p;
+                    ctx.net.AllReduce(search_step_timer_.Milliseconds()) / p;
                 size_t file_op =
-                        ctx.net.AllReduce(file_op_timer_.Milliseconds()) / p;
+                    ctx.net.AllReduce(file_op_timer_.Milliseconds()) / p;
                 size_t comm =
-                        ctx.net.AllReduce(comm_timer_.Milliseconds()) / p;
+                    ctx.net.AllReduce(comm_timer_.Milliseconds()) / p;
 
                 if (ctx.my_rank() == 0) {
                     PrintToSQLPlotTool("balance", p, balance);
@@ -299,11 +295,10 @@ protected:
     Stats stats_;
 
     void GetSplitterRanks(SequenceAdapters& sequences,
-            std::vector<std::vector<size_t>>& out_local_ranks,
-            std::vector<size_t>& target_ranks,
-            std::vector<std::vector<size_t>>& left,
-            std::vector<std::vector<size_t>>& width)
-    {
+                          std::vector<std::vector<size_t> >& out_local_ranks,
+                          std::vector<size_t>& target_ranks,
+                          std::vector<std::vector<size_t> >& left,
+                          std::vector<std::vector<size_t> >& width) {
         auto seq_count = sequences.size();
         auto splitter_count = target_ranks.size();
 
@@ -389,8 +384,8 @@ protected:
     }
 
     void GetTargetRanks(SequenceAdapters& sequences,
-            const size_t splitter_count,
-            std::vector<size_t>& out_target_ranks) {
+                        const size_t splitter_count,
+                        std::vector<size_t>& out_target_ranks) {
         auto seq_count = sequences.size();
 
         // Count of all local elements.
@@ -404,9 +399,9 @@ protected:
         if (self_verify) {
             for (size_t s = 0; s < seq_count; s++) {
                 for (size_t n = 1; n < sequences[s].size(); n++) {
-                    //if (comparator_(sequences[s][n], sequences[s][n - 1])) {
+                    // if (comparator_(sequences[s][n], sequences[s][n - 1])) {
                     //    die("Input was not sorted!");
-                    //}
+                    // }
                 }
             }
         }
@@ -452,10 +447,10 @@ protected:
      * \param out_pivots The output pivots.
      */
     void SelectPivots(
-            SequenceAdapters& sequences,
-            const std::vector<std::vector<size_t>>& left,
-            const std::vector<std::vector<size_t>>& width,
-            std::vector<Pivot>& out_pivots) {
+        SequenceAdapters& sequences,
+        const std::vector<std::vector<size_t> >& left,
+        const std::vector<std::vector<size_t> >& width,
+        std::vector<Pivot>& out_pivots) {
 
         // Select a random pivot for the largest range we have for each
         // splitter.
@@ -484,11 +479,11 @@ protected:
             }
 
             out_pivots[r] = Pivot {
-                    pivot_elem,
-                    pivot_idx,
-                    width[r][ms],
-                    context_.my_rank(),
-                    ms
+                pivot_elem,
+                pivot_idx,
+                width[r][ms],
+                context_.my_rank(),
+                ms
             };
         }
 
@@ -498,7 +493,7 @@ protected:
         // largest ranges.
         stats_.comm_timer_.Start();
         out_pivots = context_.net.AllReduce(
-                out_pivots, common::ComponentSum<std::vector<Pivot>, ReducePivots>());
+            out_pivots, common::ComponentSum<std::vector<Pivot>, ReducePivots>());
         stats_.comm_timer_.Stop();
     }
 
@@ -507,12 +502,12 @@ protected:
      * Additionally returns the local ranks so we can use them in the next step.
      */
     void GetGlobalRanks(
-            SequenceAdapters& sequences,
-            std::vector<Pivot>& pivots,
-            std::vector<size_t>& global_ranks,
-            std::vector<std::vector<size_t>>& out_local_ranks,
-            std::vector<std::vector<size_t>>& left,
-            std::vector<std::vector<size_t>>& width) {
+        SequenceAdapters& sequences,
+        std::vector<Pivot>& pivots,
+        std::vector<size_t>& global_ranks,
+        std::vector<std::vector<size_t> >& out_local_ranks,
+        std::vector<std::vector<size_t> >& left,
+        std::vector<std::vector<size_t> >& width) {
 
         // Simply get the rank of each pivot in each file. Sum the ranks up
         // locally.
@@ -527,11 +522,12 @@ protected:
                 if (width[r][s] > 0) {
                     if (last_pivot[s] && EqualPivot(*last_pivot[s], pivots[r])) {
                         idx = last_idx[s];
-                    } else {
+                    }
+                    else {
                         idx = sequences[s].template GetIndexOf<Comparator>(
-                                pivots[r].value, pivots[r].tie_idx,
-                                left[r][s], left[r][s] + width[r][s],
-                                comparator_);
+                            pivots[r].value, pivots[r].tie_idx,
+                            left[r][s], left[r][s] + width[r][s],
+                            comparator_);
                         last_pivot[s] = &pivots[r];
                         last_idx[s] = idx;
                     }
@@ -559,7 +555,7 @@ protected:
         stats_.comm_timer_.Start();
         // Sum up ranks globally.
         global_ranks = context_.net.AllReduce(
-                global_ranks, common::ComponentSum<std::vector<size_t> >());
+            global_ranks, common::ComponentSum<std::vector<size_t> >());
         stats_.comm_timer_.Stop();
     }
 
@@ -582,12 +578,12 @@ protected:
      * This parameter will be modified.
      */
     void SearchStep(
-            const std::vector<Pivot>& pivots,
-            const std::vector<size_t>& global_ranks,
-            const std::vector<std::vector<size_t>>& local_ranks,
-            const std::vector<size_t>& target_ranks,
-            std::vector<std::vector<size_t>>& left,
-            std::vector<std::vector<size_t>>& width) {
+        const std::vector<Pivot>& pivots,
+        const std::vector<size_t>& global_ranks,
+        const std::vector<std::vector<size_t> >& local_ranks,
+        const std::vector<size_t>& target_ranks,
+        std::vector<std::vector<size_t> >& left,
+        std::vector<std::vector<size_t> >& width) {
 
         for (size_t r = 0; r < width.size(); r++) {
             for (size_t s = 0; s < width[r].size(); s++) {
@@ -613,7 +609,8 @@ protected:
                 }
                 else if (target_ranks[r] < global_ranks[r]) {
                     width[r][s] = local_rank - left[r][s];
-                } else {
+                }
+                else {
                     left[r][s] = local_rank;
                     width[r][s] = 0;
                 }
@@ -627,9 +624,10 @@ protected:
 };
 
 template <typename ValueType, typename Comparator, typename SortAlgorithm>
-class MultiSequenceSelectorSampled : public MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator> {
-    using Sequences = typename std::vector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>>;
-    using Samples = typename std::vector<std::deque<ValueType>>;
+class MultiSequenceSelectorSampled : public MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>
+{
+    using Sequences = typename std::vector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType> >;
+    using Samples = typename std::vector<std::deque<ValueType> >;
     using Pivot = typename MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>::Pivot;
     using ReducePivots = typename MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>::ReducePivots;
 
@@ -639,13 +637,11 @@ public:
     MultiSequenceSelectorSampled(Context& context, size_t dia_id,
                                  const Comparator& comparator,
                                  const SortAlgorithm& sort_algorithm)
-         : MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>(context, comparator),
-                 dia_id_(dia_id), sort_algorithm_(sort_algorithm) {
+        : MultiSequenceSelector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>, Comparator>(context, comparator),
+          dia_id_(dia_id), sort_algorithm_(sort_algorithm) { }
 
-    }
-
-    void GetEquallyDistantSplitterRanks(Sequences &sequences,
-                                        std::vector<std::vector<size_t>> &out_local_ranks,
+    void GetEquallyDistantSplitterRanks(Sequences& sequences,
+                                        std::vector<std::vector<size_t> >& out_local_ranks,
                                         size_t splitter_count) {
         auto seq_count = sequences.size();
 
@@ -653,9 +649,9 @@ public:
         this->GetTargetRanks(sequences, splitter_count, target_ranks);
 
         // Search range bounds.
-        std::vector<std::vector<size_t>>
-                left(splitter_count, std::vector<size_t>(seq_count)),
-                width(splitter_count, std::vector<size_t>(seq_count));
+        std::vector<std::vector<size_t> >
+        left(splitter_count, std::vector<size_t>(seq_count)),
+        width(splitter_count, std::vector<size_t>(seq_count));
 
         // Initialize all lefts with 0 and widths with 1 if sequence.size() > 0.
         for (size_t r = 0; r < splitter_count; r++) {
@@ -667,7 +663,7 @@ public:
         }
 
         auto stream = this->context_.template GetNewStream<data::CatStream>(
-                this->dia_id_);
+            this->dia_id_);
         auto writers = stream->GetWriters();
         auto readers = stream->GetReaders();
 
@@ -681,13 +677,13 @@ public:
 
             for (size_t i = 0; i < num_blocks; i++) {
                 samples.push_back(
-                        BlockSample {
-                            block_samples[i],
-                            i,
-                            sequences[s].ItemsStartIn(i),
-                            this->context_.my_rank(),
-                            s
-                        });
+                    BlockSample {
+                        block_samples[i],
+                        i,
+                        sequences[s].ItemsStartIn(i),
+                        this->context_.my_rank(),
+                        s
+                    });
             }
         }
 
@@ -701,18 +697,18 @@ public:
         if (this->context_.my_rank() == 0) {
             for (size_t p = 1; p < P; p++) {
                 auto foreign_samples = std::move(
-                        readers[p].template Next<std::vector<BlockSample>>());
+                    readers[p].template Next<std::vector<BlockSample> >());
 
                 samples.insert(samples.end(), foreign_samples.begin(),
-                        foreign_samples.end());
+                               foreign_samples.end());
             }
 
             // TODO replace with merges
             sort_algorithm_(samples.begin(), samples.end(),
-                    [this](BlockSample a, BlockSample b)
-                    {
-                        return this->comparator_(a.value, b.value);
-                    });
+                            [this](BlockSample a, BlockSample b)
+                            {
+                                return this->comparator_(a.value, b.value);
+                            });
 
             for (size_t i = 1; i < samples.size(); i++) {
                 samples[i + 1].size += samples[i].size;
@@ -727,29 +723,29 @@ public:
                 size_t block_index = std::lower_bound(samples.begin(),
                                                       samples.end(),
                                                       target_ranks[r],
-                                                      [](BlockSample b, size_t t){
-                    return b.size < t;
-                }) - samples.begin();
+                                                      [](BlockSample b, size_t t) {
+                                                          return b.size < t;
+                                                      }) - samples.begin();
 
                 if (block_index > 0) {
                     size_t b = 0;
-                    std::vector<std::vector<bool>> workers_sent(P,
-                            std::vector<bool>(seq_count, false));
+                    std::vector<std::vector<bool> > workers_sent(P,
+                                                                 std::vector<bool>(seq_count, false));
 
                     while (b < P * seq_count && block_index > 0) {
                         block_index--;
 
                         auto block_sample = samples[block_index];
                         if (!workers_sent[block_sample.worker_rank]
-                                [block_sample.sequence_idx]) {
+                            [block_sample.sequence_idx]) {
                             writers[block_sample.worker_rank].Put(
-                                    ReplyBlockSample{
-                                            block_sample.idx,
-                                            block_sample.sequence_idx,
-                                            r
-                                    });
+                                ReplyBlockSample{
+                                    block_sample.idx,
+                                    block_sample.sequence_idx,
+                                    r
+                                });
                             workers_sent[block_sample.worker_rank]
-                                [block_sample.sequence_idx] = true;
+                            [block_sample.sequence_idx] = true;
                             b++;
                         }
                     }
@@ -763,20 +759,20 @@ public:
             writers[p].Close();
         }
 
-        while(readers[0].HasNext()) {
+        while (readers[0].HasNext()) {
             auto sample = readers[0].template Next<ReplyBlockSample>();
 
             width[sample.splitter_idx][sample.sequence_idx] =
-                    sequences[sample.sequence_idx].ItemsStartIn(sample.idx);
+                sequences[sample.sequence_idx].ItemsStartIn(sample.idx);
             left[sample.splitter_idx][sample.sequence_idx] =
-                    sequences[sample.sequence_idx].num_items_sum()[sample.idx] -
-                    width[sample.splitter_idx][sample.sequence_idx];
+                sequences[sample.sequence_idx].num_items_sum()[sample.idx] -
+                width[sample.splitter_idx][sample.sequence_idx];
         }
 
         stream.reset();
 
         this->GetSplitterRanks(sequences, out_local_ranks, target_ranks, left,
-                width);
+                               width);
     }
 
 private:
@@ -800,36 +796,34 @@ private:
 };
 
 template <typename SequenceAdapterType, typename Comparator>
-void run_multi_sequence_selection(Context &context,
-                                  const Comparator &comparator,
-                                  std::vector<SequenceAdapterType> &sequences,
-                                  std::vector<std::vector<size_t>> &out_local_ranks,
+void run_multi_sequence_selection(Context& context,
+                                  const Comparator& comparator,
+                                  std::vector<SequenceAdapterType>& sequences,
+                                  std::vector<std::vector<size_t> >& out_local_ranks,
                                   size_t splitter_count) {
     MultiSequenceSelector<SequenceAdapterType, Comparator> selector(context,
                                                                     comparator);
     return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks,
                                                    splitter_count);
-
 }
 
 template <typename ValueType, typename Comparator,
-        typename SortAlgorithm>
-void run_sampled_multi_sequence_selection(Context &context, size_t dia_id,
-                                  const Comparator &comparator,
-                                  const SortAlgorithm &sort_algorithm,
-                                  std::vector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType>> &sequences,
-                                  std::vector<std::vector<size_t>> &out_local_ranks,
-                                  size_t splitter_count) {
+          typename SortAlgorithm>
+void run_sampled_multi_sequence_selection(Context& context, size_t dia_id,
+                                          const Comparator& comparator,
+                                          const SortAlgorithm& sort_algorithm,
+                                          std::vector<MultiSequenceSelectorSampledFileSequenceAdapter<ValueType> >& sequences,
+                                          std::vector<std::vector<size_t> >& out_local_ranks,
+                                          size_t splitter_count) {
     MultiSequenceSelectorSampled<ValueType, Comparator, SortAlgorithm>
-            selector(context, dia_id, comparator, sort_algorithm);
+    selector(context, dia_id, comparator, sort_algorithm);
     return selector.GetEquallyDistantSplitterRanks(sequences, out_local_ranks,
-            splitter_count);
-
+                                                   splitter_count);
 }
 
 } // namespace core
 } // namespace thrill
 
-#endif // !THRILL_API_MULTI_SEQUENCE_SELECTION_HEADER
+#endif // !THRILL_CORE_MULTI_SEQUENCE_SELECTION_HEADER
 
 /******************************************************************************/

@@ -39,8 +39,8 @@ class SampledFile : public File
 
 public:
     //! Constructor from BlockPool
-    SampledFile(BlockPool& block_pool, size_t local_worker_id, size_t dia_id) :
-        File(block_pool, local_worker_id, dia_id) {}
+    SampledFile(BlockPool& block_pool, size_t local_worker_id, size_t dia_id)
+        : File(block_pool, local_worker_id, dia_id) { }
 
     //! non-copyable: delete copy-constructor
     SampledFile(const SampledFile&) = delete;
@@ -104,13 +104,13 @@ public:
      *
      * The search is sped up by the Block samples.
      */
-    template <typename Comparator = std::less<ItemType>>
+    template <typename Comparator = std::less<ItemType> >
     size_t GetFastIndexOf(const ItemType& item, size_t tie,
-            const Comparator& less = Comparator()) const {
+                          const Comparator& less = Comparator()) const {
         LOG << "item: " << tlx::wrap_unp(item);
         // TODO replace with custom binary search with tie breaker
         size_t block_index = std::lower_bound(block_samples_.begin(),
-                block_samples_.end(), item, less) - block_samples_.begin();
+                                              block_samples_.end(), item, less) - block_samples_.begin();
         size_t result = 0;
         if (num_items() > 0 && (block_index > 0 || !less(item, block_samples_[block_index]))) {
             if (block_index > 0) {
@@ -144,6 +144,7 @@ public:
     std::deque<ItemType> block_samples() {
         return block_samples_;
     }
+
 private:
     std::deque<ItemType> block_samples_;
 };

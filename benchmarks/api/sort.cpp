@@ -31,7 +31,7 @@ struct Record {
         return key < b.key;
     }
 
-    friend std ::ostream& operator << (std::ostream& os, const Record& r) {
+    friend std::ostream& operator << (std::ostream& os, const Record& r) {
         return os << r.key << r.value;
     }
 } TLX_ATTRIBUTE_PACKED;
@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
     api::Run(
         [&iterations, &size](api::Context& ctx) {
             for (int i = 0; i < iterations; i++) {
-                std::default_random_engine generator(std::random_device {} ());
+                std::default_random_engine generator(std::random_device { } ());
                 std::uniform_int_distribution<uint64_t> distribution(0, std::numeric_limits<uint64_t>::max());
 
                 common::StatsTimerStart timer;
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
                     ctx, size / sizeof(Record),
                     [&distribution, &generator](size_t) -> Record {
                         uint64_t key = distribution(generator);
-                        Record r{key, key};
+                        Record r{ key, key };
                         return r;
                     })
                 .Sort().Size();

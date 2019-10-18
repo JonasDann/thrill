@@ -22,8 +22,8 @@
 #include <thrill/common/stats_counter.hpp>
 #include <thrill/common/stats_timer.hpp>
 #include <thrill/common/string.hpp>
-#include <thrill/core/multiway_merge.hpp>
 #include <thrill/core/multi_sequence_selection.hpp>
+#include <thrill/core/multiway_merge.hpp>
 #include <thrill/data/dyn_block_reader.hpp>
 #include <thrill/data/file.hpp>
 
@@ -193,7 +193,7 @@ private:
 
     using FileSequenceAdapter = core::MultisequenceSelectorFileSequenceAdapter<ValueType>;
 
-    using LocalRanks = std::vector<std::vector<size_t>>;
+    using LocalRanks = std::vector<std::vector<size_t> >;
 
     //! Whether the parent stack is empty
     const std::array<bool, kNumInputs> parent_stack_empty_;
@@ -268,7 +268,7 @@ private:
             sequences[i] = FileSequenceAdapter(files_[i]);
 
         core::run_multi_sequence_selection<FileSequenceAdapter, Comparator>
-                (context_, comparator_, sequences, local_ranks, p - 1);
+            (context_, comparator_, sequences, local_ranks, p - 1);
 
         LOG << "Creating channels";
 

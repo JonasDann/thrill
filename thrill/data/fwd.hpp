@@ -12,7 +12,7 @@
 #ifndef THRILL_DATA_FWD_HEADER
 #define THRILL_DATA_FWD_HEADER
 
-#include<tlx/counting_ptr.hpp>
+#include <tlx/counting_ptr.hpp>
 
 namespace thrill {
 namespace data {
@@ -20,11 +20,11 @@ namespace data {
 template <typename ItemType>
 class SampledFile;
 template <typename ItemType>
-using SampledFilePtr = tlx::CountingPtr<SampledFile<ItemType>>;
+using SampledFilePtr = tlx::CountingPtr<SampledFile<ItemType> >;
 
 } // namespace data
 } // namespace thrill
 
-#endif // !THRILL_DATA_FILE_HEADER
+#endif // !THRILL_DATA_FWD_HEADER
 
 /******************************************************************************/
