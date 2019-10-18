@@ -1,5 +1,5 @@
 /*******************************************************************************
- * thrill/api/online_sample_sort.hpp
+ * thrill/api/sort_online_sample_sort.hpp
  *
  * Part of Project Thrill - http://project-thrill.org
  *
@@ -9,8 +9,8 @@
  ******************************************************************************/
 
 #pragma once
-#ifndef THRILL_API_ONLINE_SAMPLE_SORT_HEADER
-#define THRILL_API_ONLINE_SAMPLE_SORT_HEADER
+#ifndef THRILL_API_SORT_ONLINE_SAMPLE_SORT_HEADER
+#define THRILL_API_SORT_ONLINE_SAMPLE_SORT_HEADER
 
 #include <thrill/api/dia.hpp>
 #include <thrill/api/dop_node.hpp>
@@ -668,7 +668,7 @@ private:
     }
 };
 
-class DefaultSortAlgorithm
+class DefaultSortAlgorithm3
 {
 public:
     template <typename Iterator, typename CompareFunction>
@@ -684,7 +684,7 @@ auto DIA<ValueType, Stack>::OnlineSampleSort(const size_t r,
     assert(IsValid());
 
     using OnlineSampleSortNode = api::OnlineSampleSortNode<
-        ValueType, CompareFunction, DefaultSortAlgorithm>;
+        ValueType, CompareFunction, DefaultSortAlgorithm3>;
 
     static_assert(
         std::is_convertible<
@@ -712,6 +712,6 @@ auto DIA<ValueType, Stack>::OnlineSampleSort(const size_t r,
 } // namespace api
 } // namespace thrill
 
-#endif // !THRILL_API_ONLINE_SAMPLE_SORT_HEADER
+#endif // !THRILL_API_SORT_ONLINE_SAMPLE_SORT_HEADER
 
 /******************************************************************************/

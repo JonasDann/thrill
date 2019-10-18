@@ -1,5 +1,5 @@
 /*******************************************************************************
- * thrill/api/canonical_merge_sort.hpp
+ * thrill/api/sort_canonical_merge_sort.hpp
  *
  * Part of Project Thrill - http://project-thrill.org
  *
@@ -9,8 +9,8 @@
  ******************************************************************************/
 
 #pragma once
-#ifndef THRILL_API_CANONICAL_MERGE_SORT_HEADER
-#define THRILL_API_CANONICAL_MERGE_SORT_HEADER
+#ifndef THRILL_API_SORT_CANONICAL_MERGE_SORT_HEADER
+#define THRILL_API_SORT_CANONICAL_MERGE_SORT_HEADER
 
 #include <thrill/api/context.hpp>
 #include <thrill/api/dia.hpp>
@@ -603,6 +603,6 @@ auto DIA<ValueType, Stack>::CanonicalMergeSort(
 } // namespace api
 } // namespace thrill
 
-#endif // !THRILL_API_CANONICAL_MERGE_SORT_HEADER
+#endif // !THRILL_API_SORT_CANONICAL_MERGE_SORT_HEADER
 
 /******************************************************************************/

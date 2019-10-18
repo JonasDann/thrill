@@ -9,10 +9,10 @@
  ******************************************************************************/
 
 #include <thrill/api/all_gather.hpp>
-#include <thrill/api/canonical_merge_sort.hpp>
 #include <thrill/api/dia.hpp>
 #include <thrill/api/generate.hpp>
 #include <thrill/api/size.hpp>
+#include <thrill/api/sort_canonical_merge_sort.hpp>
 #include <thrill/common/logger.hpp>
 #include <tlx/cmdline_parser.hpp>
 
