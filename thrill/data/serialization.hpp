@@ -29,6 +29,8 @@ namespace data {
 //! \addtogroup data_layer
 //! \{
 
+TLX_MAKE_HAS_MEMBER(thrill_is_fixed_size);
+
 /******************* Serialization of plain old data types ********************/
 
 template <typename Archive, typename T>
@@ -37,6 +39,7 @@ struct Serialization<Archive, T,
                          // a POD, but not a pointer
                          std::is_pod<T>::value
                          && !std::is_pointer<T>::value
+                         && !has_member_thrill_is_fixed_size<T>::value
                          >::type> {
     static void Serialize(const T& x, Archive& ar) {
         ar.template PutRaw<T>(x);
@@ -225,8 +228,6 @@ struct Serialization<Archive, std::array<T, N>,
 };
 
 /******************* Serialization via Class Methods **************************/
-
-TLX_MAKE_HAS_MEMBER(thrill_is_fixed_size);
 
 template <typename Archive, typename T>
 struct Serialization<Archive, T,

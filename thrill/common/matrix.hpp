@@ -124,8 +124,8 @@ public:
     //! serialization with Thrill's serializer
     template <typename Archive>
     void ThrillSerialize(Archive& ar) const {
-        ar.template Put<size_t>(rows_);
-        ar.template Put<size_t>(columns_);
+        ar.template PutRaw<size_t>(rows_);
+        ar.template PutRaw<size_t>(columns_);
         for (typename std::vector<Type>::const_iterator it = data_.begin();
              it != data_.end(); ++it) {
             data::Serialization<Archive, Type>::Serialize(*it, ar);
@@ -135,8 +135,8 @@ public:
     //! deserialization with Thrill's serializer
     template <typename Archive>
     static Matrix ThrillDeserialize(Archive& ar) {
-        size_t rows = ar.template Get<size_t>();
-        size_t columns = ar.template Get<size_t>();
+        size_t rows = ar.template GetRaw<size_t>();
+        size_t columns = ar.template GetRaw<size_t>();
         std::vector<Type> data;
         data.resize(0);
         data.reserve(rows * columns);
