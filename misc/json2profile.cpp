@@ -118,11 +118,16 @@ std::string GetProgramName() {
 class CNetManager : public CEvent
 {
 public:
+    uint64_t tx_bytes;
+    uint64_t rx_bytes;
+
     double tx_speed;
     double rx_speed;
 
     explicit CNetManager(const rapidjson::Document& d)
         : CEvent(d),
+          tx_bytes(GetUint64(d, "tx_bytes")),
+          rx_bytes(GetUint64(d, "rx_bytes")),
           tx_speed(GetDouble(d, "tx_speed")),
           rx_speed(GetDouble(d, "rx_speed"))
     { }
@@ -1124,39 +1129,69 @@ std::string PageMain() {
                                   [](const CLinuxProcStats& c) {
                                       return c.cpu_user;
                                   });
-    double net_tx_rx_bytes = 0;
-    for (size_t i = 0; i < c_NetManager.size() - 1; i++) {
-        double td = (c_NetManager[i + 1].ts - c_NetManager[i].ts) / 1000000.0;
-        net_tx_rx_bytes +=
-            (c_NetManager[i].tx_speed + c_NetManager[i].rx_speed) * td;
-    }
 
-    /*uint64_t net_tx_bytes =
-        CalcSum(c_LinuxProcStats,
-                [](const CLinuxProcStats& c) {
-                    return c.net_tx_bytes;
+    uint64_t net_tx_rx_bytes =
+        CalcSum(c_NetManager,
+                [](const CNetManager& c) {
+                    return c.tx_bytes + c.rx_bytes;
                 });
-    uint64_t net_rx_bytes =
-        CalcSum(c_LinuxProcStats,
-                [](const CLinuxProcStats& c) {
-                    return c.net_rx_bytes;
-                });*/
+    // uint64_t net_tx_bytes =
+    //     CalcSum(c_NetManager,
+    //             [](const CNetManager& c) {
+    //                 return c.tx_bytes;
+    //             });
+    // uint64_t net_rx_bytes =
+    //     CalcSum(c_NetManager,
+    //             [](const CNetManager& c) {
+    //                 return c.rx_bytes;
+    //             });
 
     double net_tx_rx_speed =
         CalcAverage(c_NetManager,
                     [](const CNetManager& c) {
                         return c.tx_speed + c.rx_speed;
                     });
-    /*double net_tx_speed =
+    double net_tx_speed =
+        CalcAverage(c_NetManager,
+                    [](const CNetManager& c) {
+                        return c.tx_speed;
+                    });
+    double net_rx_speed =
+        CalcAverage(c_NetManager,
+                    [](const CNetManager& c) {
+                        return c.rx_speed;
+                    });
+
+    // system network measurements
+
+    uint64_t sys_net_tx_rx_bytes =
+        CalcSum(c_LinuxProcStats,
+                [](const CLinuxProcStats& c) {
+                    return c.net_tx_bytes + c.net_rx_bytes;
+                });
+    uint64_t sys_net_tx_bytes =
+        CalcSum(c_LinuxProcStats,
+                [](const CLinuxProcStats& c) {
+                    return c.net_tx_bytes;
+                });
+    uint64_t sys_net_rx_bytes =
+        CalcSum(c_LinuxProcStats,
+                [](const CLinuxProcStats& c) {
+                    return c.net_rx_bytes;
+                });
+
+    double sys_net_tx_speed =
         CalcAverage(c_LinuxProcStats,
                     [](const CLinuxProcStats& c) {
                         return c.net_tx_speed;
                     });
-    double net_rx_speed =
+    double sys_net_rx_speed =
         CalcAverage(c_LinuxProcStats,
                     [](const CLinuxProcStats& c) {
                         return c.net_rx_speed;
-                    });*/
+                    });
+
+    // system I/O measurements
 
     uint64_t diskstats_rd_wr_bytes =
         CalcSum(c_LinuxProcStats,
@@ -1177,25 +1212,37 @@ std::string PageMain() {
     two_cells_IEC(net_tx_rx_bytes);
     oss << "</tr>";
 
-    /*oss << "<tr><td>TX net total</td>";
-    two_cells_IEC(net_tx_bytes);
-    oss << "</tr>";
-
-    oss << "<tr><td>RX net total</td>";
-    two_cells_IEC(net_rx_bytes);
-    oss << "</tr>";*/
-
     oss << "<tr><td>TX+RX net average</td>";
     two_cells_IEC_per_sec(net_tx_rx_speed);
     oss << "</tr>";
 
-    /*oss << "<tr><td>TX net average</td>";
+    oss << "<tr><td>TX net average</td>";
     two_cells_IEC_per_sec(net_tx_speed);
     oss << "</tr>";
 
     oss << "<tr><td>RX net average</td>";
     two_cells_IEC_per_sec(net_rx_speed);
-    oss << "</tr>";*/
+    oss << "</tr>";
+
+    oss << "<tr><td>TX+RX sys net total</td>";
+    two_cells_IEC(sys_net_tx_rx_bytes);
+    oss << "</tr>";
+
+    oss << "<tr><td>TX sys net total</td>";
+    two_cells_IEC(sys_net_tx_bytes);
+    oss << "</tr>";
+
+    oss << "<tr><td>RX sys net total</td>";
+    two_cells_IEC(sys_net_rx_bytes);
+    oss << "</tr>";
+
+    oss << "<tr><td>TX sys net average</td>";
+    two_cells_IEC_per_sec(sys_net_tx_speed);
+    oss << "</tr>";
+
+    oss << "<tr><td>RX sys net average</td>";
+    two_cells_IEC_per_sec(sys_net_rx_speed);
+    oss << "</tr>";
 
     oss << "<tr><td>I/O sys read+write</td>";
     two_cells_IEC(diskstats_rd_wr_bytes);
@@ -1359,7 +1406,7 @@ std::string ResultLines() {
 
     for (const auto& v : MakeSeriesVector(
              c_NetManager, [](const CNetManager& c) {
-                 return c.tx_speed + c.rx_speed;
+                 return c.tx_bytes + c.rx_bytes;
              }))
     {
         oss << "RESULT"
